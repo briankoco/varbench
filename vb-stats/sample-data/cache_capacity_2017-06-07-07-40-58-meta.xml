@@ -1,0 +1,107 @@
+<!-- Varbench 1.0 metadata file -->
+<vb_metadata>
+	<general>
+		<data_file val="cache_capacity_2017-06-07-07-40-58-data.csv"/>
+		<num_instances val="1024"/>
+		<num_nodes val="16"/>
+		<num_local_instances val="64"/>
+	</general>
+
+	<options>
+		<option id="debugging" val="on"/>
+		<option id="iterations" val="100"/>
+		<option id="memory_affinity" val="local"/>
+		<option id="processor_pinning" val="socket:hw_thread:core"/>
+	</options>
+
+	<kernel name="cache_capacity" argc="2">
+		<arg val="3"/>
+		<arg val="r"/>
+	</kernel>
+
+	<nodes>
+		<node id="0" hostname="ser1"/>
+		<node id="1" hostname="ser2"/>
+		<node id="2" hostname="ser3"/>
+		<node id="3" hostname="ser4"/>
+		<node id="4" hostname="ser5"/>
+		<node id="5" hostname="ser6"/>
+		<node id="6" hostname="ser7"/>
+		<node id="7" hostname="ser8"/>
+		<node id="8" hostname="ser9"/>
+		<node id="9" hostname="ser10"/>
+		<node id="10" hostname="ser11"/>
+		<node id="11" hostname="ser12"/>
+		<node id="12" hostname="ser13"/>
+		<node id="13" hostname="ser14"/>
+		<node id="14" hostname="ser162"/>
+		<node id="15" hostname="ser163"/>
+	</nodes>
+
+	<processors num_sockets="2" cores_per_socket="18" hw_threads_per_core="2">
+		<processor local_rank="0" socket="0" core="0" hw_thread="0" os_core="0"/>
+		<processor local_rank="1" socket="1" core="0" hw_thread="0" os_core="18"/>
+		<processor local_rank="2" socket="0" core="0" hw_thread="1" os_core="36"/>
+		<processor local_rank="3" socket="1" core="0" hw_thread="1" os_core="54"/>
+		<processor local_rank="4" socket="0" core="1" hw_thread="0" os_core="1"/>
+		<processor local_rank="5" socket="1" core="1" hw_thread="0" os_core="19"/>
+		<processor local_rank="6" socket="0" core="1" hw_thread="1" os_core="37"/>
+		<processor local_rank="7" socket="1" core="1" hw_thread="1" os_core="55"/>
+		<processor local_rank="8" socket="0" core="2" hw_thread="0" os_core="2"/>
+		<processor local_rank="9" socket="1" core="2" hw_thread="0" os_core="20"/>
+		<processor local_rank="10" socket="0" core="2" hw_thread="1" os_core="38"/>
+		<processor local_rank="11" socket="1" core="2" hw_thread="1" os_core="56"/>
+		<processor local_rank="12" socket="0" core="3" hw_thread="0" os_core="3"/>
+		<processor local_rank="13" socket="1" core="3" hw_thread="0" os_core="21"/>
+		<processor local_rank="14" socket="0" core="3" hw_thread="1" os_core="39"/>
+		<processor local_rank="15" socket="1" core="3" hw_thread="1" os_core="57"/>
+		<processor local_rank="16" socket="0" core="4" hw_thread="0" os_core="4"/>
+		<processor local_rank="17" socket="1" core="4" hw_thread="0" os_core="22"/>
+		<processor local_rank="18" socket="0" core="4" hw_thread="1" os_core="40"/>
+		<processor local_rank="19" socket="1" core="4" hw_thread="1" os_core="58"/>
+		<processor local_rank="20" socket="0" core="5" hw_thread="0" os_core="5"/>
+		<processor local_rank="21" socket="1" core="5" hw_thread="0" os_core="23"/>
+		<processor local_rank="22" socket="0" core="5" hw_thread="1" os_core="41"/>
+		<processor local_rank="23" socket="1" core="5" hw_thread="1" os_core="59"/>
+		<processor local_rank="24" socket="0" core="6" hw_thread="0" os_core="6"/>
+		<processor local_rank="25" socket="1" core="6" hw_thread="0" os_core="24"/>
+		<processor local_rank="26" socket="0" core="6" hw_thread="1" os_core="42"/>
+		<processor local_rank="27" socket="1" core="6" hw_thread="1" os_core="60"/>
+		<processor local_rank="28" socket="0" core="7" hw_thread="0" os_core="7"/>
+		<processor local_rank="29" socket="1" core="7" hw_thread="0" os_core="25"/>
+		<processor local_rank="30" socket="0" core="7" hw_thread="1" os_core="43"/>
+		<processor local_rank="31" socket="1" core="7" hw_thread="1" os_core="61"/>
+		<processor local_rank="32" socket="0" core="8" hw_thread="0" os_core="8"/>
+		<processor local_rank="33" socket="1" core="8" hw_thread="0" os_core="26"/>
+		<processor local_rank="34" socket="0" core="8" hw_thread="1" os_core="44"/>
+		<processor local_rank="35" socket="1" core="8" hw_thread="1" os_core="62"/>
+		<processor local_rank="36" socket="0" core="9" hw_thread="0" os_core="9"/>
+		<processor local_rank="37" socket="1" core="9" hw_thread="0" os_core="27"/>
+		<processor local_rank="38" socket="0" core="9" hw_thread="1" os_core="45"/>
+		<processor local_rank="39" socket="1" core="9" hw_thread="1" os_core="63"/>
+		<processor local_rank="40" socket="0" core="10" hw_thread="0" os_core="10"/>
+		<processor local_rank="41" socket="1" core="10" hw_thread="0" os_core="28"/>
+		<processor local_rank="42" socket="0" core="10" hw_thread="1" os_core="46"/>
+		<processor local_rank="43" socket="1" core="10" hw_thread="1" os_core="64"/>
+		<processor local_rank="44" socket="0" core="11" hw_thread="0" os_core="11"/>
+		<processor local_rank="45" socket="1" core="11" hw_thread="0" os_core="29"/>
+		<processor local_rank="46" socket="0" core="11" hw_thread="1" os_core="47"/>
+		<processor local_rank="47" socket="1" core="11" hw_thread="1" os_core="65"/>
+		<processor local_rank="48" socket="0" core="12" hw_thread="0" os_core="12"/>
+		<processor local_rank="49" socket="1" core="12" hw_thread="0" os_core="30"/>
+		<processor local_rank="50" socket="0" core="12" hw_thread="1" os_core="48"/>
+		<processor local_rank="51" socket="1" core="12" hw_thread="1" os_core="66"/>
+		<processor local_rank="52" socket="0" core="13" hw_thread="0" os_core="13"/>
+		<processor local_rank="53" socket="1" core="13" hw_thread="0" os_core="31"/>
+		<processor local_rank="54" socket="0" core="13" hw_thread="1" os_core="49"/>
+		<processor local_rank="55" socket="1" core="13" hw_thread="1" os_core="67"/>
+		<processor local_rank="56" socket="0" core="14" hw_thread="0" os_core="14"/>
+		<processor local_rank="57" socket="1" core="14" hw_thread="0" os_core="32"/>
+		<processor local_rank="58" socket="0" core="14" hw_thread="1" os_core="50"/>
+		<processor local_rank="59" socket="1" core="14" hw_thread="1" os_core="68"/>
+		<processor local_rank="60" socket="0" core="15" hw_thread="0" os_core="15"/>
+		<processor local_rank="61" socket="1" core="15" hw_thread="0" os_core="33"/>
+		<processor local_rank="62" socket="0" core="15" hw_thread="1" os_core="51"/>
+		<processor local_rank="63" socket="1" core="15" hw_thread="1" os_core="69"/>
+	</processors>
+</vb_metadata>

@@ -1,0 +1,155 @@
+<!-- Varbench 1.0 metadata file -->
+<vb_metadata>
+	<general>
+		<data_file val="cache_capacity_2017-06-07-12-25-26-data.csv"/>
+		<num_instances val="4096"/>
+		<num_nodes val="64"/>
+		<num_local_instances val="64"/>
+	</general>
+
+	<options>
+		<option id="debugging" val="on"/>
+		<option id="iterations" val="100"/>
+		<option id="memory_affinity" val="local"/>
+		<option id="processor_pinning" val="socket:hw_thread:core"/>
+	</options>
+
+	<kernel name="cache_capacity" argc="2">
+		<arg val="3"/>
+		<arg val="r"/>
+	</kernel>
+
+	<nodes>
+		<node id="0" hostname="ser1"/>
+		<node id="1" hostname="ser2"/>
+		<node id="2" hostname="ser3"/>
+		<node id="3" hostname="ser4"/>
+		<node id="4" hostname="ser5"/>
+		<node id="5" hostname="ser6"/>
+		<node id="6" hostname="ser7"/>
+		<node id="7" hostname="ser8"/>
+		<node id="8" hostname="ser9"/>
+		<node id="9" hostname="ser14"/>
+		<node id="10" hostname="ser730"/>
+		<node id="11" hostname="ser731"/>
+		<node id="12" hostname="ser732"/>
+		<node id="13" hostname="ser733"/>
+		<node id="14" hostname="ser734"/>
+		<node id="15" hostname="ser735"/>
+		<node id="16" hostname="ser736"/>
+		<node id="17" hostname="ser737"/>
+		<node id="18" hostname="ser740"/>
+		<node id="19" hostname="ser742"/>
+		<node id="20" hostname="ser743"/>
+		<node id="21" hostname="ser749"/>
+		<node id="22" hostname="ser750"/>
+		<node id="23" hostname="ser760"/>
+		<node id="24" hostname="ser761"/>
+		<node id="25" hostname="ser766"/>
+		<node id="26" hostname="ser774"/>
+		<node id="27" hostname="ser775"/>
+		<node id="28" hostname="ser776"/>
+		<node id="29" hostname="ser777"/>
+		<node id="30" hostname="ser778"/>
+		<node id="31" hostname="ser779"/>
+		<node id="32" hostname="ser780"/>
+		<node id="33" hostname="ser781"/>
+		<node id="34" hostname="ser782"/>
+		<node id="35" hostname="ser783"/>
+		<node id="36" hostname="ser784"/>
+		<node id="37" hostname="ser785"/>
+		<node id="38" hostname="ser786"/>
+		<node id="39" hostname="ser787"/>
+		<node id="40" hostname="ser788"/>
+		<node id="41" hostname="ser789"/>
+		<node id="42" hostname="ser790"/>
+		<node id="43" hostname="ser791"/>
+		<node id="44" hostname="ser792"/>
+		<node id="45" hostname="ser795"/>
+		<node id="46" hostname="ser796"/>
+		<node id="47" hostname="ser799"/>
+		<node id="48" hostname="ser801"/>
+		<node id="49" hostname="ser877"/>
+		<node id="50" hostname="ser961"/>
+		<node id="51" hostname="ser962"/>
+		<node id="52" hostname="ser963"/>
+		<node id="53" hostname="ser964"/>
+		<node id="54" hostname="ser965"/>
+		<node id="55" hostname="ser966"/>
+		<node id="56" hostname="ser967"/>
+		<node id="57" hostname="ser968"/>
+		<node id="58" hostname="ser969"/>
+		<node id="59" hostname="ser970"/>
+		<node id="60" hostname="ser971"/>
+		<node id="61" hostname="ser972"/>
+		<node id="62" hostname="ser974"/>
+		<node id="63" hostname="ser976"/>
+	</nodes>
+
+	<processors num_sockets="2" cores_per_socket="18" hw_threads_per_core="2">
+		<processor local_rank="0" socket="0" core="0" hw_thread="0" os_core="0"/>
+		<processor local_rank="1" socket="1" core="0" hw_thread="0" os_core="18"/>
+		<processor local_rank="2" socket="0" core="0" hw_thread="1" os_core="36"/>
+		<processor local_rank="3" socket="1" core="0" hw_thread="1" os_core="54"/>
+		<processor local_rank="4" socket="0" core="1" hw_thread="0" os_core="1"/>
+		<processor local_rank="5" socket="1" core="1" hw_thread="0" os_core="19"/>
+		<processor local_rank="6" socket="0" core="1" hw_thread="1" os_core="37"/>
+		<processor local_rank="7" socket="1" core="1" hw_thread="1" os_core="55"/>
+		<processor local_rank="8" socket="0" core="2" hw_thread="0" os_core="2"/>
+		<processor local_rank="9" socket="1" core="2" hw_thread="0" os_core="20"/>
+		<processor local_rank="10" socket="0" core="2" hw_thread="1" os_core="38"/>
+		<processor local_rank="11" socket="1" core="2" hw_thread="1" os_core="56"/>
+		<processor local_rank="12" socket="0" core="3" hw_thread="0" os_core="3"/>
+		<processor local_rank="13" socket="1" core="3" hw_thread="0" os_core="21"/>
+		<processor local_rank="14" socket="0" core="3" hw_thread="1" os_core="39"/>
+		<processor local_rank="15" socket="1" core="3" hw_thread="1" os_core="57"/>
+		<processor local_rank="16" socket="0" core="4" hw_thread="0" os_core="4"/>
+		<processor local_rank="17" socket="1" core="4" hw_thread="0" os_core="22"/>
+		<processor local_rank="18" socket="0" core="4" hw_thread="1" os_core="40"/>
+		<processor local_rank="19" socket="1" core="4" hw_thread="1" os_core="58"/>
+		<processor local_rank="20" socket="0" core="5" hw_thread="0" os_core="5"/>
+		<processor local_rank="21" socket="1" core="5" hw_thread="0" os_core="23"/>
+		<processor local_rank="22" socket="0" core="5" hw_thread="1" os_core="41"/>
+		<processor local_rank="23" socket="1" core="5" hw_thread="1" os_core="59"/>
+		<processor local_rank="24" socket="0" core="6" hw_thread="0" os_core="6"/>
+		<processor local_rank="25" socket="1" core="6" hw_thread="0" os_core="24"/>
+		<processor local_rank="26" socket="0" core="6" hw_thread="1" os_core="42"/>
+		<processor local_rank="27" socket="1" core="6" hw_thread="1" os_core="60"/>
+		<processor local_rank="28" socket="0" core="7" hw_thread="0" os_core="7"/>
+		<processor local_rank="29" socket="1" core="7" hw_thread="0" os_core="25"/>
+		<processor local_rank="30" socket="0" core="7" hw_thread="1" os_core="43"/>
+		<processor local_rank="31" socket="1" core="7" hw_thread="1" os_core="61"/>
+		<processor local_rank="32" socket="0" core="8" hw_thread="0" os_core="8"/>
+		<processor local_rank="33" socket="1" core="8" hw_thread="0" os_core="26"/>
+		<processor local_rank="34" socket="0" core="8" hw_thread="1" os_core="44"/>
+		<processor local_rank="35" socket="1" core="8" hw_thread="1" os_core="62"/>
+		<processor local_rank="36" socket="0" core="9" hw_thread="0" os_core="9"/>
+		<processor local_rank="37" socket="1" core="9" hw_thread="0" os_core="27"/>
+		<processor local_rank="38" socket="0" core="9" hw_thread="1" os_core="45"/>
+		<processor local_rank="39" socket="1" core="9" hw_thread="1" os_core="63"/>
+		<processor local_rank="40" socket="0" core="10" hw_thread="0" os_core="10"/>
+		<processor local_rank="41" socket="1" core="10" hw_thread="0" os_core="28"/>
+		<processor local_rank="42" socket="0" core="10" hw_thread="1" os_core="46"/>
+		<processor local_rank="43" socket="1" core="10" hw_thread="1" os_core="64"/>
+		<processor local_rank="44" socket="0" core="11" hw_thread="0" os_core="11"/>
+		<processor local_rank="45" socket="1" core="11" hw_thread="0" os_core="29"/>
+		<processor local_rank="46" socket="0" core="11" hw_thread="1" os_core="47"/>
+		<processor local_rank="47" socket="1" core="11" hw_thread="1" os_core="65"/>
+		<processor local_rank="48" socket="0" core="12" hw_thread="0" os_core="12"/>
+		<processor local_rank="49" socket="1" core="12" hw_thread="0" os_core="30"/>
+		<processor local_rank="50" socket="0" core="12" hw_thread="1" os_core="48"/>
+		<processor local_rank="51" socket="1" core="12" hw_thread="1" os_core="66"/>
+		<processor local_rank="52" socket="0" core="13" hw_thread="0" os_core="13"/>
+		<processor local_rank="53" socket="1" core="13" hw_thread="0" os_core="31"/>
+		<processor local_rank="54" socket="0" core="13" hw_thread="1" os_core="49"/>
+		<processor local_rank="55" socket="1" core="13" hw_thread="1" os_core="67"/>
+		<processor local_rank="56" socket="0" core="14" hw_thread="0" os_core="14"/>
+		<processor local_rank="57" socket="1" core="14" hw_thread="0" os_core="32"/>
+		<processor local_rank="58" socket="0" core="14" hw_thread="1" os_core="50"/>
+		<processor local_rank="59" socket="1" core="14" hw_thread="1" os_core="68"/>
+		<processor local_rank="60" socket="0" core="15" hw_thread="0" os_core="15"/>
+		<processor local_rank="61" socket="1" core="15" hw_thread="0" os_core="33"/>
+		<processor local_rank="62" socket="0" core="15" hw_thread="1" os_core="51"/>
+		<processor local_rank="63" socket="1" core="15" hw_thread="1" os_core="69"/>
+	</processors>
+</vb_metadata>
