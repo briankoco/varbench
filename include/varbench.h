@@ -22,6 +22,11 @@
 #include <hwloc.h>
 #include <mpi.h>
 
+#if HWLOC_API_VERSION < 0x00010b00
+#define HWLOC_OBJ_NUMANODE HWLOC_OBJ_NODE
+#define HWLOC_OBJ_PACKAGE HWLOC_OBJ_SOCKET
+#endif
+
 #ifdef USE_PAPI
 #include <papi.h>
 #endif
