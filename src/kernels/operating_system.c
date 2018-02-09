@@ -23,6 +23,7 @@
 #include <dlfcn.h>
 
 #include <varbench.h>
+#include <libsyzcorpus.h>
 
 #include <cJSON.h>
 
@@ -294,6 +295,10 @@ iteration(vb_instance_t      * instance,
 
     /* Nothing's failed (yet ...) */
     program_list->last_failed_program = -1;
+
+
+    /* Allocation of array of syscall info */
+
 
     for (i = 0; i < nr_programs_per_iteration; i++) {
         vb_program_t * program = &(program_list->program_list[program_indices[i]]);

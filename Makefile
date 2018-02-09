@@ -19,7 +19,7 @@ HEADERS = $(INCLUDE_DIR)/varbench.h
 CC = mpicc
 AR = ar
 
-CFLAGS := -D_GNU_SOURCE -pthread -fPIC -I$(INCLUDE_DIR) -I$(UTILS_DIR) $(EXTERN_LIBS)
+CFLAGS := -D_GNU_SOURCE -pthread -fPIC -I$(INCLUDE_DIR) -I$(UTILS_DIR) -I$(CORPUS_DIR) $(EXTERN_LIBS)
 LDFLAGS :=
 EXTERN_LIBS := -lhwloc -lm -lnuma -pthread -ldl
 
