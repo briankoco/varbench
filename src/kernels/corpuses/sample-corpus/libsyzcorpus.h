@@ -1,6 +1,8 @@
 #ifndef __LIBSYZCORPUS_H__
 #define __LIBSYZCORPUS_H__
 
+#define MAX_SYSCALLS 4207
+
 /* Programs that succeed */
 int _9da3a47c615f58b328ed74dba0999170392a4fa9(void);
 int _55e3e70ad78ecb1324d28dc3b90a6499b0fd674c(void);
