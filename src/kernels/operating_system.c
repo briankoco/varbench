@@ -70,7 +70,7 @@ call_fn(syzkaller_prototype_t fn,
         int                 * normal_exit,
         struct timeval      * t1,
         struct timeval      * t2,
-		scall_info          * scall_info_arr,
+		syscall_info          * scall_info_arr,
 		int                 * num_scalls) 
 {
     pid_t pid;
@@ -123,7 +123,7 @@ call_fn(syzkaller_prototype_t fn,
             close(to_parent_fd[1]);
 
             /* Go */
-            fn(scall_info_arr, &num_scalls);
+            fn(scall_info_arr, num_scalls);
             exit(0);
 
         default:
@@ -211,7 +211,7 @@ exec_program(vb_instance_t      * instance,
              vb_program_t       * program,
              char                 execution_mode,
              unsigned long long * time,
-			 scall_info         * scall_info_arr)
+			 syscall_info       * scall_info_arr)
 {
     struct timeval t1, t2;
     int exit_status, normal_exit, num_scalls;
@@ -222,7 +222,7 @@ exec_program(vb_instance_t      * instance,
         program->fn(scall_info_arr, &num_scalls);
         gettimeofday(&t2, NULL);
     } else {
-        call_fn(program->fn, &exit_status, &normal_exit, &t1, &t2, scall_info_arr, &num_salls);
+        call_fn(program->fn, &exit_status, &normal_exit, &t1, &t2, scall_info_arr, &num_scalls);
         if (!normal_exit) {
             vb_debug("Program %s exited via signal: %d (%s)\n", program->name, exit_status, strsignal(exit_status));
 
@@ -243,7 +243,7 @@ exec_and_check_program(vb_instance_t      * instance,
                        unsigned long long * time,
                        int                * local_status,
                        int                * global_status,
-					   scall_info         * scall_info_arr)
+					   syscall_info         * scall_info_arr)
 {
     *local_status = exec_program(instance, program, execution_mode, time, scall_info_arr);
     MPI_Allreduce(local_status, global_status, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -284,7 +284,7 @@ iteration(vb_instance_t      * instance,
           int                * program_indices,
           bool                 dry_run,
           unsigned long long * time_p,
-		  scall_info		 * scall_info_arr)
+		  syscall_info		 * scall_info_arr)
 {
     struct timeval t1, t2;
     int total_errors = 0, local_status, global_status;
@@ -354,7 +354,7 @@ __run_kernel(vb_instance_t     * instance,
     int dummy, failure_count;
     syzkaller_prototype_t prototype;
 
-	scall_info *scall_info_arr = malloc(sizeof(scall_info) * MAX_SYSCALLS);
+	syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
 	if (!scall_info_arr){
 		vb_error("Out of memory\n");
         return VB_GENERIC_ERROR;
@@ -620,6 +620,13 @@ derive_program_set(vb_instance_t     * instance,
         vb_error("Out of memory\n");
         return VB_GENERIC_ERROR;
     }
+	
+	syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
+	if (!scall_info_arr){
+		vb_error("Out of memory\n");
+		free(success_indices);
+        return VB_GENERIC_ERROR;
+	}
 
     /* Here's the algorithm:
      * (1) Using seed, generate a permutation with which to walk through the program corpus
@@ -634,6 +641,7 @@ derive_program_set(vb_instance_t     * instance,
     if (!permutation) {
         vb_error("Out of memory\n");
         free(success_indices);
+		free(scall_info_arr);
         return VB_GENERIC_ERROR;
     }
     generate_random_permutation(program_list->nr_programs, permutation, false); 
@@ -656,7 +664,7 @@ derive_program_set(vb_instance_t     * instance,
             MPI_Barrier(MPI_COMM_WORLD);
 
             /* (2) (always run via 'fork' when probing the corpus) */
-            exec_and_check_program(instance, program, 'f', &time, &local_status, &global_status);
+            exec_and_check_program(instance, program, 'f', &time, &local_status, &global_status, scall_info_arr);
 
             /* (3) */
             if (global_status != 0) {
@@ -682,6 +690,7 @@ derive_program_set(vb_instance_t     * instance,
 
             free(permutation);
             free(success_indices);
+			free(scall_info_arr);
             return VB_GENERIC_ERROR;
         }
 
@@ -695,7 +704,7 @@ derive_program_set(vb_instance_t     * instance,
 
             for (i = 0; i < TEST_ITERATION_CNT; i++) {
                 status = iteration(instance, program_list, concurrency_mode, 'f', 
-                        nr_programs_per_iteration, success_indices, true, &time);
+                        nr_programs_per_iteration, success_indices, true, &time, scall_info_arr);
 
                 if (status) {
                     int st;
@@ -704,6 +713,7 @@ derive_program_set(vb_instance_t     * instance,
                         vb_error("Could not disable programs\n");
                         free(permutation);
                         free(success_indices);
+						free(scall_info_arr);
                         return VB_GENERIC_ERROR;
                     }
 
@@ -722,7 +732,7 @@ derive_program_set(vb_instance_t     * instance,
 
     vb_print_root("Corpus succeeded\n");
     free(permutation);
-
+	free(scall_info_arr);
     /* Enable everything in the success list */
     for (i = 0; i < nr_programs_per_iteration; i++) {
         vb_program_t * program = &(program_list->program_list[success_indices[i]]);
