@@ -5,17 +5,7 @@
 """
 
 header ="""
-#include <time.h> 
-#include <stdint.h>
-
-#define TO_NSECS(sec,nsec)\\
-		((sec) * 1000000000 + (nsec))
-
-typedef struct{
-	uint16_t syscall_number;
-	intptr_t ret_val;
-	unsigned long long nsecs;
-} syscall_info;
+#include \"libsyzcorpus.h\"
 
 """
 
@@ -56,5 +46,5 @@ def parse_file(program_src):
 	return ''.join(s) + '\n' 
 
 if __name__ == "__main__":
-	s= parse_file("smallcorpus.c");
+	s= parse_file("../src/kernels/corpuses/sample-corpus/libsyzcorpus.c");
 	print s
