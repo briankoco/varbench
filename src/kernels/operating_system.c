@@ -61,6 +61,32 @@ typedef struct {
 } vb_program_list_t;
 
 
+static int
+allocate_shared_mapping(unsigned long   bytes,
+                        syscall_info ** scall_info_arr)
+{
+    syscall_info * mapping = NULL;
+
+    mapping = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+            MAP_SHARED | MAP_ANONYMOUS,
+            -1, 0);
+    if (mapping == MAP_FAILED) {
+        vb_error("Failed to allocate shared memory for system call array: %s\n",
+            strerror(errno));
+        return VB_GENERIC_ERROR;
+    }
+
+    *scall_info_arr = mapping;
+    return VB_SUCCESS;
+}
+
+static void
+free_shared_mapping(syscall_info * scall_info_arr,
+                    unsigned long  bytes)
+{
+    munmap(scall_info_arr, bytes);
+}
+
 /* Just here to cause EINTR to break us out of waitpid() */
 void alrm(int s) {}
 
@@ -354,9 +380,12 @@ __run_kernel(vb_instance_t     * instance,
     int dummy, failure_count;
     syzkaller_prototype_t prototype;
 
-	syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
-	if (!scall_info_arr){
-		vb_error("Out of memory\n");
+    syscall_info * scall_info_arr;
+    size_t scall_size = sizeof(syscall_info) * MAX_SYSCALLS;
+
+    status = allocate_shared_mapping(scall_size, &scall_info_arr);
+	if (status != VB_SUCCESS){
+		vb_error("Failed to allocate syscall array\n");
         return VB_GENERIC_ERROR;
 	}
 
@@ -395,13 +424,13 @@ __run_kernel(vb_instance_t     * instance,
                     if (instance->rank_info.global_id == 0) {
                         if (vb_abort_kernel(instance) != VB_SUCCESS) {
                             vb_error_root("Failed to abort kernel. Bailing out of program entirely\n");
-							free(scall_info_arr); /*Make Sure this is right*/
+                            free_shared_mapping(scall_info_arr, scall_size);
                             return VB_GENERIC_ERROR;
                         }
                     }
 
                     /* Restart */
-					free(scall_info_arr); /*Make Sure this is right*/
+                    free_shared_mapping(scall_info_arr, scall_size);
                     return VB_OS_RESTART;
                 }
 
@@ -414,12 +443,12 @@ __run_kernel(vb_instance_t     * instance,
         status = vb_gather_kernel_results_time_spent(instance, iter, time);
         if (status != 0) {
             vb_error("Could not gather kernel results\n");
-			free(scall_info_arr); /*Make Sure this is right*/
+            free_shared_mapping(scall_info_arr, scall_size);
             return status;
         }
     }
 
-	free(scall_info_arr);
+    free_shared_mapping(scall_info_arr, scall_size);
 
     return VB_SUCCESS;
 }
