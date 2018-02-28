@@ -11,8 +11,8 @@
 #include <stdint.h>
 
 typedef struct{
-	unsigned int syscall_number;
-	int ret_val;
+	int16_t syscall_number;
+    intptr_t ret_val;
 	unsigned long long nsecs;
 } syscall_info;
 
