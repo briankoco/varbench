@@ -61,6 +61,32 @@ typedef struct {
 } vb_program_list_t;
 
 
+static int
+allocate_shared_mapping(unsigned long   bytes,
+                        syscall_info ** scall_info_arr)
+{
+    syscall_info * mapping = NULL;
+
+    mapping = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+            MAP_SHARED | MAP_ANONYMOUS,
+            -1, 0);
+    if (mapping == MAP_FAILED) {
+        vb_error("Failed to allocate shared memory for system call array: %s\n",
+            strerror(errno));
+        return VB_GENERIC_ERROR;
+    }
+
+    *scall_info_arr = mapping;
+    return VB_SUCCESS;
+}
+
+static void
+free_shared_mapping(syscall_info * scall_info_arr,
+                    unsigned long  bytes)
+{
+    munmap(scall_info_arr, bytes);
+}
+
 /* Just here to cause EINTR to break us out of waitpid() */
 void alrm(int s) {}
 
@@ -70,8 +96,8 @@ call_fn(syzkaller_prototype_t fn,
         int                 * normal_exit,
         struct timeval      * t1,
         struct timeval      * t2,
-		syscall_info          * scall_info_arr,
-		int                 * num_scalls) 
+        syscall_info          * scall_info_arr,
+        int                 * num_scalls) 
 {
     pid_t pid;
     int st, ret, to_child_fd[2], to_parent_fd[2], devnl;
@@ -211,7 +237,7 @@ exec_program(vb_instance_t      * instance,
              vb_program_t       * program,
              char                 execution_mode,
              unsigned long long * time,
-			 syscall_info       * scall_info_arr)
+             syscall_info       * scall_info_arr)
 {
     struct timeval t1, t2;
     int exit_status, normal_exit, num_scalls;
@@ -243,7 +269,7 @@ exec_and_check_program(vb_instance_t      * instance,
                        unsigned long long * time,
                        int                * local_status,
                        int                * global_status,
-					   syscall_info         * scall_info_arr)
+                       syscall_info         * scall_info_arr)
 {
     *local_status = exec_program(instance, program, execution_mode, time, scall_info_arr);
     MPI_Allreduce(local_status, global_status, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -284,7 +310,7 @@ iteration(vb_instance_t      * instance,
           int                * program_indices,
           bool                 dry_run,
           unsigned long long * time_p,
-		  syscall_info		 * scall_info_arr)
+          syscall_info       * scall_info_arr)
 {
     struct timeval t1, t2;
     int total_errors = 0, local_status, global_status;
@@ -354,11 +380,14 @@ __run_kernel(vb_instance_t     * instance,
     int dummy, failure_count;
     syzkaller_prototype_t prototype;
 
-	syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
-	if (!scall_info_arr){
-		vb_error("Out of memory\n");
+    syscall_info * scall_info_arr;
+    size_t scall_size = sizeof(syscall_info) * MAX_SYSCALLS;
+
+    status = allocate_shared_mapping(scall_size, &scall_info_arr);
+    if (status != VB_SUCCESS){
+        vb_error("Failed to allocate syscall array\n");
         return VB_GENERIC_ERROR;
-	}
+    }
 
     /* Let's be smart about program failure.
      * Simple metric that will allow us to survive an occasional
@@ -395,13 +424,13 @@ __run_kernel(vb_instance_t     * instance,
                     if (instance->rank_info.global_id == 0) {
                         if (vb_abort_kernel(instance) != VB_SUCCESS) {
                             vb_error_root("Failed to abort kernel. Bailing out of program entirely\n");
-							free(scall_info_arr); /*Make Sure this is right*/
+                            free_shared_mapping(scall_info_arr, scall_size);
                             return VB_GENERIC_ERROR;
                         }
                     }
 
                     /* Restart */
-					free(scall_info_arr); /*Make Sure this is right*/
+                    free_shared_mapping(scall_info_arr, scall_size);
                     return VB_OS_RESTART;
                 }
 
@@ -414,12 +443,12 @@ __run_kernel(vb_instance_t     * instance,
         status = vb_gather_kernel_results_time_spent(instance, iter, time);
         if (status != 0) {
             vb_error("Could not gather kernel results\n");
-			free(scall_info_arr); /*Make Sure this is right*/
+            free_shared_mapping(scall_info_arr, scall_size);
             return status;
         }
     }
 
-	free(scall_info_arr);
+    free_shared_mapping(scall_info_arr, scall_size);
 
     return VB_SUCCESS;
 }
@@ -620,13 +649,13 @@ derive_program_set(vb_instance_t     * instance,
         vb_error("Out of memory\n");
         return VB_GENERIC_ERROR;
     }
-	
-	syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
-	if (!scall_info_arr){
-		vb_error("Out of memory\n");
-		free(success_indices);
+    
+    syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
+    if (!scall_info_arr){
+        vb_error("Out of memory\n");
+        free(success_indices);
         return VB_GENERIC_ERROR;
-	}
+    }
 
     /* Here's the algorithm:
      * (1) Using seed, generate a permutation with which to walk through the program corpus
@@ -641,7 +670,7 @@ derive_program_set(vb_instance_t     * instance,
     if (!permutation) {
         vb_error("Out of memory\n");
         free(success_indices);
-		free(scall_info_arr);
+        free(scall_info_arr);
         return VB_GENERIC_ERROR;
     }
     generate_random_permutation(program_list->nr_programs, permutation, false); 
@@ -690,7 +719,7 @@ derive_program_set(vb_instance_t     * instance,
 
             free(permutation);
             free(success_indices);
-			free(scall_info_arr);
+            free(scall_info_arr);
             return VB_GENERIC_ERROR;
         }
 
@@ -713,7 +742,7 @@ derive_program_set(vb_instance_t     * instance,
                         vb_error("Could not disable programs\n");
                         free(permutation);
                         free(success_indices);
-						free(scall_info_arr);
+                        free(scall_info_arr);
                         return VB_GENERIC_ERROR;
                     }
 
@@ -732,7 +761,7 @@ derive_program_set(vb_instance_t     * instance,
 
     vb_print_root("Corpus succeeded\n");
     free(permutation);
-	free(scall_info_arr);
+    free(scall_info_arr);
     /* Enable everything in the success list */
     for (i = 0; i < nr_programs_per_iteration; i++) {
         vb_program_t * program = &(program_list->program_list[success_indices[i]]);
