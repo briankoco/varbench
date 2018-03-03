@@ -79,7 +79,7 @@ allocate_shared_mapping(syscall_info ** scall_info_arr,
         return VB_GENERIC_ERROR;
     }
 
-    for (i = 0; i < MAX_SYSCALLS; i++) {
+    for (i = 0; i < programs_per_iteration * MAX_SYSCALLS; i++) {
         mapping[i].syscall_number = NO_SYSCALL;
     }
 
@@ -341,7 +341,7 @@ iteration(vb_instance_t      * instance,
         if (dry_run) {
             assert(program->status == VB_INITING);
 
-            exec_and_check_program(instance, program, execution_mode, &time, &local_status, &global_status, &(scall_info_arr[i]));
+            exec_and_check_program(instance, program, execution_mode, &time, &local_status, &global_status, scall_info_arr);
             if (local_status != 0) {
                 program_list->last_failed_program = program_indices[i];
             }
@@ -351,7 +351,7 @@ iteration(vb_instance_t      * instance,
             }
         } else {
             assert(program->status == VB_ENABLED);
-            local_status = exec_program(instance, program, execution_mode, &time, &(scall_info_arr[i]));
+            local_status = exec_program(instance, program, execution_mode, &time, &(scall_info_arr[i*MAX_SYSCALLS]));
             if (local_status != 0) {
                 program_list->last_failed_program = program_indices[i];
                 total_errors += 1;
@@ -463,7 +463,7 @@ gather_syscall_info(vb_instance_t     * instance,
      */
     for (program_off = 0; program_off < nr_programs_per_iteration; program_off++) {
         syscall_info * last_addr;
-        syscall_info * send_buf = &(scall_info_arr[MAX_SYSCALLS * program_off]);
+        syscall_info * send_buf = &(scall_info_arr[program_off * MAX_SYSCALLS]);
 
         /* First, gather the program indices */
         MPI_Gather(
