@@ -444,7 +444,7 @@ gather_syscall_info(vb_instance_t     * instance,
         };
 
         /* Assert that the size of a pointer is size of MPI_LONG_LONG - otherwise this will fail spectacularly */
-        MPI_Type_size(MPI_LONG_LONG, &type_size);
+        MPI_Type_size(MPI_LONG_LON_INTG, &type_size);
         assert(type_size == sizeof(intptr_t));
 
         MPI_Type_create_struct(
