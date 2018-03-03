@@ -269,15 +269,12 @@ vb_init_root_instance(vb_instance_t * instance,
                       char         ** argv)
 {
     int status;
-    char * fmt_str;
     
     /* Build various files */
-    vb_build_fmt_str(instance, instance->kernel.name, &fmt_str);
+    vb_build_fmt_str(instance, instance->kernel.name, &(instance->fmt_str));
 
-    snprintf(instance->data_csv.name, VB_FMT_LEN, "%s", fmt_str);
-    snprintf(instance->meta_xml.name, VB_FMT_LEN, "%s", fmt_str);
-
-    free(fmt_str);
+    snprintf(instance->data_csv.name, VB_FMT_LEN, "%s", instance->fmt_str);
+    snprintf(instance->meta_xml.name, VB_FMT_LEN, "%s", instance->fmt_str);
 
     strncat(instance->data_csv.name, "-data.csv", VB_SUFFIX_LEN);
     strncat(instance->meta_xml.name, "-meta.xml", VB_SUFFIX_LEN);
@@ -438,6 +435,7 @@ vb_deinit_local_root_instance(vb_instance_t * instance)
 void
 vb_deinit_root_instance(vb_instance_t * instance)
 {
+    free(instance->fmt_str);
     vb_complete_meta_xml(instance);
 }
 

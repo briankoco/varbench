@@ -27,15 +27,12 @@
 
 #include <cJSON.h>
 
+#define NO_SYSCALL         1024
 #define VB_OS_RESTART      1024
 #define MAX_NAME_LEN       64
 #define TEST_ITERATION_CNT 1
 
 //#define VB_NO_CHECK
-
-/* TODO: per-system call tracking */
-
-
 
 
 typedef int (*syzkaller_prototype_t)(syscall_info *scall_info, int *num_calls);
@@ -44,7 +41,7 @@ typedef enum {
     VB_INITING,
     VB_DISABLED,
     VB_ENABLED,
-} vb_program_status_t;;
+} vb_program_status_t;
 
 typedef struct {
     char name[MAX_NAME_LEN];
@@ -61,12 +58,18 @@ typedef struct {
 } vb_program_list_t;
 
 
+static char   csv_filename[VB_FILE_LEN] = {0};
+static FILE * csv_file = NULL;
+
 static int
-allocate_shared_mapping(unsigned long   bytes,
-                        syscall_info ** scall_info_arr)
+allocate_shared_mapping(syscall_info ** scall_info_arr,
+                        int             programs_per_iteration)
 {
     syscall_info * mapping = NULL;
+    unsigned long bytes;
+    int i;
 
+    bytes   = sizeof(syscall_info) * MAX_SYSCALLS * programs_per_iteration;
     mapping = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
             MAP_SHARED | MAP_ANONYMOUS,
             -1, 0);
@@ -76,14 +79,19 @@ allocate_shared_mapping(unsigned long   bytes,
         return VB_GENERIC_ERROR;
     }
 
+    for (i = 0; i < MAX_SYSCALLS; i++) {
+        mapping[i].syscall_number = NO_SYSCALL;
+    }
+
     *scall_info_arr = mapping;
     return VB_SUCCESS;
 }
 
 static void
 free_shared_mapping(syscall_info * scall_info_arr,
-                    unsigned long  bytes)
+                    int            nr_programs_per_iteration)
 {
+    unsigned long bytes = sizeof(syscall_info) * MAX_SYSCALLS * nr_programs_per_iteration;
     munmap(scall_info_arr, bytes);
 }
 
@@ -327,17 +335,13 @@ iteration(vb_instance_t      * instance,
     /* Nothing's failed (yet ...) */
     program_list->last_failed_program = -1;
 
-
-    /* Allocation of array of syscall info */
-
-
     for (i = 0; i < nr_programs_per_iteration; i++) {
         vb_program_t * program = &(program_list->program_list[program_indices[i]]);
         
         if (dry_run) {
             assert(program->status == VB_INITING);
 
-            exec_and_check_program(instance, program, execution_mode, &time, &local_status, &global_status, scall_info_arr);
+            exec_and_check_program(instance, program, execution_mode, &time, &local_status, &global_status, &(scall_info_arr[i]));
             if (local_status != 0) {
                 program_list->last_failed_program = program_indices[i];
             }
@@ -347,7 +351,7 @@ iteration(vb_instance_t      * instance,
             }
         } else {
             assert(program->status == VB_ENABLED);
-            local_status = exec_program(instance, program, execution_mode, &time, scall_info_arr);
+            local_status = exec_program(instance, program, execution_mode, &time, &(scall_info_arr[i]));
             if (local_status != 0) {
                 program_list->last_failed_program = program_indices[i];
                 total_errors += 1;
@@ -367,6 +371,167 @@ iteration(vb_instance_t      * instance,
 }
 
 static int
+init_syscall_info_file(vb_instance_t * instance)
+{
+    int status;
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(csv_filename, VB_FMT_LEN, "%s", instance->fmt_str);
+    strncat(csv_filename, "-syscalls.csv", VB_SUFFIX_LEN);
+
+    csv_file = fopen(csv_filename, "w");
+    if (csv_file == NULL) {
+        vb_error_root("Could not create csv file %s\n", csv_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(csv_file, "rank,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
+    fflush(csv_file);
+
+    return VB_SUCCESS;
+}
+                      
+
+static int
+gather_syscall_info(vb_instance_t     * instance,
+                    vb_program_list_t * program_list,
+                    int               * program_indices,
+                    int                 nr_programs_per_iteration,
+                    syscall_info      * scall_info_arr)
+{
+    vb_rank_info_t * rank_info = &(instance->rank_info);
+    unsigned int id            = rank_info->global_id;
+    unsigned int num_instances = rank_info->num_instances;
+    syscall_info * global_arr  = NULL;
+    int * global_program_indices = NULL;
+    int program_off;
+
+    MPI_Datatype syscall_dt;
+
+    if (id == 0) {
+        global_program_indices = malloc(sizeof(int) * num_instances);
+        if (!global_program_indices) {
+            vb_error_root("Out of memory\n");
+            return VB_GENERIC_ERROR;
+        }
+
+        global_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS * num_instances);
+        if (!global_arr) {
+            vb_error_root("Out of memory\n");
+            free(global_program_indices);
+            return VB_GENERIC_ERROR;
+        }
+    }
+
+    /* Definte MPI datatype for syscall info */
+    {
+        int ret, type_size;
+        int count = 3;
+        int array_of_blocklengths[] = {
+            1,
+            1,
+            1
+        };
+        MPI_Aint array_of_displacements[] = {
+            offsetof(syscall_info, syscall_number), 
+            offsetof(syscall_info, ret_val), 
+            offsetof(syscall_info, nsecs),
+        };
+        MPI_Datatype array_of_types[] = {
+            MPI_SHORT,
+            MPI_LONG_LONG_INT,
+            MPI_UNSIGNED_LONG_LONG
+        };
+
+        /* Assert that the size of a pointer is size of MPI_LONG_LONG - otherwise this will fail spectacularly */
+        MPI_Type_size(MPI_LONG_LONG, &type_size);
+        assert(type_size == sizeof(intptr_t));
+
+        MPI_Type_create_struct(
+            count,
+            array_of_blocklengths,
+            array_of_displacements,
+            array_of_types,
+            &syscall_dt
+        );
+        MPI_Type_commit(&syscall_dt);
+
+    }
+
+    /* Gather syscall data for one program at a time, so as to limit the size
+     * of the array we need to allocate at root
+     */
+    for (program_off = 0; program_off < nr_programs_per_iteration; program_off++) {
+        syscall_info * last_addr;
+        syscall_info * send_buf = &(scall_info_arr[MAX_SYSCALLS * program_off]);
+
+        /* First, gather the program indices */
+        MPI_Gather(
+            &(program_indices[program_off]),
+            1,
+            MPI_INT,
+            global_program_indices,
+            1,
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD
+        );
+
+        /* Now, gather syscall data */
+        MPI_Gather(
+            send_buf,
+            MAX_SYSCALLS, 
+            syscall_dt, 
+            global_arr, 
+            MAX_SYSCALLS,
+            syscall_dt, 
+            0, 
+            MPI_COMM_WORLD
+        );
+
+        /* global_arr now holds all data from some program in each rank */
+        if (id == 0) {
+            unsigned int rid;
+            unsigned int syscall_off;
+            unsigned int syscall_nr;
+
+            for (rid = 0; rid < num_instances; rid++) {
+                syscall_nr = 0;
+                for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
+                    syscall_info * syscall = &(global_arr[syscall_off]);
+
+                    if (syscall->syscall_number != NO_SYSCALL) {
+                        /* print format:
+                         *  rank_id,program_id,syscall_off_in_program,syscall_number,ret_val,nsecs
+                         */
+                        fprintf(csv_file, "%d,%s,%d,%d,%li,%llu\n",
+                            rid,
+                            program_list->program_list[global_program_indices[rid]].name,
+                            syscall_nr++,
+                            syscall->syscall_number,
+                            syscall->ret_val,
+                            syscall->nsecs
+                        );
+
+                        fflush(csv_file);
+                    }
+                }
+            }
+        }
+
+        last_addr = send_buf;
+    }
+
+out:
+    if (id == 0) {
+        free(global_arr);
+        free(global_program_indices);
+    }
+   
+    return VB_SUCCESS;
+}
+
+static int
 __run_kernel(vb_instance_t     * instance,
              unsigned long long  iterations,
              vb_program_list_t * program_list,
@@ -379,11 +544,9 @@ __run_kernel(vb_instance_t     * instance,
     int fd, status, prog_off = 0;
     int dummy, failure_count;
     syzkaller_prototype_t prototype;
-
     syscall_info * scall_info_arr;
-    size_t scall_size = sizeof(syscall_info) * MAX_SYSCALLS;
 
-    status = allocate_shared_mapping(scall_size, &scall_info_arr);
+    status = allocate_shared_mapping(&scall_info_arr, nr_programs_per_iteration);
     if (status != VB_SUCCESS){
         vb_error("Failed to allocate syscall array\n");
         return VB_GENERIC_ERROR;
@@ -404,8 +567,8 @@ __run_kernel(vb_instance_t     * instance,
             MPI_Barrier(MPI_COMM_WORLD);
 
             /* execute all programs in the set */
-            dummy = iteration(instance, program_list, concurrency_mode, execution_mode, nr_programs_per_iteration, 
-                    program_indices, false, &time, scall_info_arr);
+            dummy = iteration(instance, program_list, concurrency_mode, execution_mode, 
+                    nr_programs_per_iteration, program_indices, false, &time, scall_info_arr);
 
             if (dummy != 0) {
                 vb_print_root("Iteration %llu failed\n", iter);
@@ -424,13 +587,16 @@ __run_kernel(vb_instance_t     * instance,
                     if (instance->rank_info.global_id == 0) {
                         if (vb_abort_kernel(instance) != VB_SUCCESS) {
                             vb_error_root("Failed to abort kernel. Bailing out of program entirely\n");
-                            free_shared_mapping(scall_info_arr, scall_size);
+                            free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
                             return VB_GENERIC_ERROR;
                         }
+
+                        /* truncate the syscall info csv */
+
                     }
 
                     /* Restart */
-                    free_shared_mapping(scall_info_arr, scall_size);
+                    free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
                     return VB_OS_RESTART;
                 }
 
@@ -443,12 +609,21 @@ __run_kernel(vb_instance_t     * instance,
         status = vb_gather_kernel_results_time_spent(instance, iter, time);
         if (status != 0) {
             vb_error("Could not gather kernel results\n");
-            free_shared_mapping(scall_info_arr, scall_size);
+            free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
+            return status;
+        }
+
+        /* Gather the system call information */
+        status = gather_syscall_info(instance, program_list, program_indices,
+                nr_programs_per_iteration, scall_info_arr);
+        if (status != 0) {
+            vb_error("Could not gather kernel syscall results\n");
+            free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
             return status;
         }
     }
 
-    free_shared_mapping(scall_info_arr, scall_size);
+    free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
 
     return VB_SUCCESS;
 }
@@ -886,7 +1061,6 @@ run_kernel(vb_instance_t    * instance,
 
     /* Do this until we get a successful program run */
     do {
-
         /* Disable any failed programs */
         status = disable_failed_programs(instance, program_list);
         if (status != VB_SUCCESS) {
@@ -908,6 +1082,15 @@ run_kernel(vb_instance_t    * instance,
         if (status != VB_SUCCESS) {
             vb_error_root("Unable to derive set of successful programs\n");
             goto out_prog_list;
+        }
+
+        /* initialize the csv for syscall data, if we are root */
+        if (instance->rank_info.global_id == 0) {
+            status = init_syscall_info_file(instance);
+            if (status != VB_SUCCESS) {
+                vb_error_root("Could not initialize syscall CSV\n");
+                goto out_prog_list;
+            }
         }
         
         /* Run the kernel */

@@ -127,6 +127,9 @@ typedef struct varbench_instance {
     vb_kernel_t    kernel;
     vb_perfctrs_t  perf_ctrs;
 
+    /* unique string to identify this experiment */
+    char * fmt_str;
+
     struct {
         FILE * file;
         char name[VB_FILE_LEN];
