@@ -385,7 +385,7 @@ init_syscall_info_file(vb_instance_t * instance)
         return VB_GENERIC_ERROR;
     }
 
-    fprintf(csv_file, "rank,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
+    fprintf(csv_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
     fflush(csv_file);
 
     return VB_SUCCESS;
@@ -397,6 +397,7 @@ gather_syscall_info(vb_instance_t     * instance,
                     vb_program_list_t * program_list,
                     int               * program_indices,
                     int                 nr_programs_per_iteration,
+                    unsigned long long  iteration,
                     syscall_info      * scall_info_arr)
 {
     vb_rank_info_t * rank_info = &(instance->rank_info);
@@ -501,10 +502,11 @@ gather_syscall_info(vb_instance_t     * instance,
 
                     if (syscall->syscall_number != NO_SYSCALL) {
                         /* print format:
-                         *  rank_id,program_id,syscall_off_in_program,syscall_number,ret_val,nsecs
+                         *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,nsecs
                          */
-                        fprintf(csv_file, "%d,%s,%d,%d,%li,%llu\n",
+                        fprintf(csv_file, "%d,%llu,%s,%d,%d,%li,%llu\n",
                             rid,
+                            iteration,
                             program_list->program_list[global_program_indices[rid]].name,
                             syscall_nr++,
                             syscall->syscall_number,
@@ -611,7 +613,7 @@ __run_kernel(vb_instance_t     * instance,
 
         /* Gather the system call information */
         status = gather_syscall_info(instance, program_list, program_indices,
-                nr_programs_per_iteration, scall_info_arr);
+                nr_programs_per_iteration, iter, scall_info_arr);
         if (status != 0) {
             vb_error("Could not gather kernel syscall results\n");
             free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
@@ -1100,7 +1102,6 @@ run_kernel(vb_instance_t    * instance,
 
         free(program_indices);
     } while (status == VB_OS_RESTART);
-
 
 out_prog_list:
     free(program_list->program_list);
