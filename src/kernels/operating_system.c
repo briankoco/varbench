@@ -462,7 +462,6 @@ gather_syscall_info(vb_instance_t     * instance,
      * of the array we need to allocate at root
      */
     for (program_off = 0; program_off < nr_programs_per_iteration; program_off++) {
-        syscall_info * last_addr;
         syscall_info * send_buf = &(scall_info_arr[program_off * MAX_SYSCALLS]);
 
         /* First, gather the program indices */
@@ -498,7 +497,7 @@ gather_syscall_info(vb_instance_t     * instance,
             for (rid = 0; rid < num_instances; rid++) {
                 syscall_nr = 0;
                 for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
-                    syscall_info * syscall = &(global_arr[syscall_off]);
+                    syscall_info * syscall = &(global_arr[rid * MAX_SYSCALLS + syscall_off]);
 
                     if (syscall->syscall_number != NO_SYSCALL) {
                         /* print format:
@@ -518,11 +517,8 @@ gather_syscall_info(vb_instance_t     * instance,
                 }
             }
         }
-
-        last_addr = send_buf;
     }
 
-out:
     if (id == 0) {
         free(global_arr);
         free(global_program_indices);
