@@ -513,11 +513,11 @@ gather_syscall_info(vb_instance_t     * instance,
                             syscall->ret_val,
                             syscall->nsecs
                         );
-
-                        fflush(csv_file);
                     }
                 }
             }
+
+            fflush(csv_file);
         }
     }
 
