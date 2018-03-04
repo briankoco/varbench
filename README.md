@@ -37,7 +37,7 @@ calls.
 mpirun -np <n procs> [any other MPI options] ./varbench -k <kernel> [any other varbench options]
 ```
 
-Running ./varbench without no arguments will give you a list of options and 
+Running ./varbench with no arguments will give you a list of options and 
 describe how to use the framework.
 
 ### Varbench methodology
@@ -58,7 +58,7 @@ there is a global MPI Barrier at which point timing information is
 collected and stored at the root process.
 
 Kernels constitute the singular workload executing in each instance.
-Varbench currently provides a set of worklaods that stress shared
+Varbench currently provides a set of workloads that stress shared
 resource performance.
 
 
@@ -78,7 +78,7 @@ experiments.
 
 Many varbench kernels are tuned to low level characteristics of the
 architecture. For all kernels, each node is inspected to determine the number
-of procssor sockets, number of cores per socket, and the number of SMT threads
+of processor sockets, number of cores per socket, and the number of SMT threads
 per core (e.g., `hyperthreads`). By default, these characteristics are detected
 via the ```hwloc``` library. However, some architectures and operating systems
 may not expose the interfaces required by hwloc to perform topology detection,
