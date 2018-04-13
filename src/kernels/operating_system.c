@@ -67,7 +67,6 @@ allocate_shared_mapping(syscall_info ** scall_info_arr,
 {
     syscall_info * mapping = NULL;
     unsigned long bytes;
-    int i;
 
     bytes   = sizeof(syscall_info) * MAX_SYSCALLS * programs_per_iteration;
     mapping = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
@@ -77,10 +76,6 @@ allocate_shared_mapping(syscall_info ** scall_info_arr,
         vb_error("Failed to allocate shared memory for system call array: %s\n",
             strerror(errno));
         return VB_GENERIC_ERROR;
-    }
-
-    for (i = 0; i < programs_per_iteration * MAX_SYSCALLS; i++) {
-        mapping[i].syscall_number = NO_SYSCALL;
     }
 
     *scall_info_arr = mapping;
@@ -351,6 +346,7 @@ iteration(vb_instance_t      * instance,
             }
         } else {
             assert(program->status == VB_ENABLED);
+
             local_status = exec_program(instance, program, execution_mode, &time, &(scall_info_arr[i*MAX_SYSCALLS]));
             if (local_status != 0) {
                 program_list->last_failed_program = program_indices[i];
@@ -456,7 +452,6 @@ gather_syscall_info(vb_instance_t     * instance,
             &syscall_dt
         );
         MPI_Type_commit(&syscall_dt);
-
     }
 
     /* Gather syscall data for one program at a time, so as to limit the size
@@ -539,7 +534,7 @@ __run_kernel(vb_instance_t     * instance,
              int               * program_indices)
 {
     unsigned long long iter, time;
-    int fd, status, prog_off = 0;
+    int fd, status, i;
     int dummy, failure_count;
     syzkaller_prototype_t prototype;
     syscall_info * scall_info_arr;
@@ -562,6 +557,11 @@ __run_kernel(vb_instance_t     * instance,
     failure_count = 0;
     for (iter = 0; iter < iterations; iter++) {
         do {
+            /* re-init the syscall array before each iteration */
+            for (i = 0; i < nr_programs_per_iteration * MAX_SYSCALLS; i++) {
+                scall_info_arr[i].syscall_number = NO_SYSCALL;
+            }
+
             MPI_Barrier(MPI_COMM_WORLD);
 
             /* execute all programs in the set */
