@@ -34,8 +34,7 @@
 
 //#define VB_NO_CHECK
 
-
-typedef int (*syzkaller_prototype_t)(syscall_info *scall_info, int *num_calls);
+typedef int (*syzkaller_prototype_t)(vb_syscall_info_t * scall_info, int * num_calls);
 
 typedef enum {
     VB_INITING,
@@ -57,18 +56,34 @@ typedef struct {
     int            last_failed_program;
 } vb_program_list_t;
 
+typedef struct {
+    vb_program_list_t * program_list;
+    char * json_file;
 
-static char   csv_filename[VB_FILE_LEN] = {0};
-static FILE * csv_file = NULL;
+    char concurrency_mode;
+    char execution_mode;
+    int  nr_programs_per_iteration;
+    int  selection_seed;
+
+    bool   generate_program_csv;
+    char   program_filename[VB_FILE_LEN];
+    FILE * program_file;
+
+    bool   generate_syscall_csv;
+    char   syscall_filename[VB_FILE_LEN];
+    FILE * syscall_file;
+
+    vb_syscall_info_t * syscall_arr;
+} vb_os_info_t;
 
 static int
-allocate_shared_mapping(syscall_info ** scall_info_arr,
-                        int             programs_per_iteration)
+allocate_shared_mapping(vb_syscall_info_t ** syscall_arr,
+                        int                  programs_per_iteration)
 {
-    syscall_info * mapping = NULL;
+    vb_syscall_info_t * mapping = NULL;
     unsigned long bytes;
 
-    bytes   = sizeof(syscall_info) * MAX_SYSCALLS * programs_per_iteration;
+    bytes   = sizeof(vb_syscall_info_t) * MAX_SYSCALLS * programs_per_iteration;
     mapping = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
             MAP_SHARED | MAP_ANONYMOUS,
             -1, 0);
@@ -78,16 +93,16 @@ allocate_shared_mapping(syscall_info ** scall_info_arr,
         return VB_GENERIC_ERROR;
     }
 
-    *scall_info_arr = mapping;
+    *syscall_arr = mapping;
     return VB_SUCCESS;
 }
 
 static void
-free_shared_mapping(syscall_info * scall_info_arr,
-                    int            nr_programs_per_iteration)
+free_shared_mapping(vb_syscall_info_t * syscall_arr,
+                    int                 nr_programs_per_iteration)
 {
-    unsigned long bytes = sizeof(syscall_info) * MAX_SYSCALLS * nr_programs_per_iteration;
-    munmap(scall_info_arr, bytes);
+    unsigned long bytes = sizeof(vb_syscall_info_t) * MAX_SYSCALLS * nr_programs_per_iteration;
+    munmap(syscall_arr, bytes);
 }
 
 /* Just here to cause EINTR to break us out of waitpid() */
@@ -99,7 +114,7 @@ call_fn(syzkaller_prototype_t fn,
         int                 * normal_exit,
         struct timeval      * t1,
         struct timeval      * t2,
-        syscall_info          * scall_info_arr,
+        vb_syscall_info_t   * syscall_arr,
         int                 * num_scalls) 
 {
     pid_t pid;
@@ -152,7 +167,7 @@ call_fn(syzkaller_prototype_t fn,
             close(to_parent_fd[1]);
 
             /* Go */
-            fn(scall_info_arr, num_scalls);
+            fn(syscall_arr, num_scalls);
             exit(0);
 
         default:
@@ -240,7 +255,7 @@ exec_program(vb_instance_t      * instance,
              vb_program_t       * program,
              char                 execution_mode,
              unsigned long long * time,
-             syscall_info       * scall_info_arr)
+             vb_syscall_info_t  * syscall_arr)
 {
     struct timeval t1, t2;
     int exit_status, normal_exit, num_scalls;
@@ -248,10 +263,10 @@ exec_program(vb_instance_t      * instance,
     if (execution_mode == 'd') {
         /* Here we go ... */
         gettimeofday(&t1, NULL);
-        program->fn(scall_info_arr, &num_scalls);
+        program->fn(syscall_arr, &num_scalls);
         gettimeofday(&t2, NULL);
     } else {
-        call_fn(program->fn, &exit_status, &normal_exit, &t1, &t2, scall_info_arr, &num_scalls);
+        call_fn(program->fn, &exit_status, &normal_exit, &t1, &t2, syscall_arr, &num_scalls);
         if (!normal_exit) {
             vb_debug("Program %s exited via signal: %d (%s)\n", program->name, exit_status, strsignal(exit_status));
 
@@ -272,9 +287,9 @@ exec_and_check_program(vb_instance_t      * instance,
                        unsigned long long * time,
                        int                * local_status,
                        int                * global_status,
-                       syscall_info         * scall_info_arr)
+                       vb_syscall_info_t  * syscall_arr)
 {
-    *local_status = exec_program(instance, program, execution_mode, time, scall_info_arr);
+    *local_status = exec_program(instance, program, execution_mode, time, syscall_arr);
     MPI_Allreduce(local_status, global_status, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 }
 
@@ -306,14 +321,10 @@ generate_random_permutation(int   nr_indices,
 /* iteration_all: execute all programs in a list */
 static int
 iteration(vb_instance_t      * instance,
-          vb_program_list_t  * program_list,
-          char                 concurrency_mode,
-          char                 execution_mode,
-          int                  nr_programs_per_iteration,
+          vb_os_info_t       * os_info,
           int                * program_indices,
           bool                 dry_run,
-          unsigned long long * time_p,
-          syscall_info       * scall_info_arr)
+          unsigned long long * time_p)
 {
     struct timeval t1, t2;
     int total_errors = 0, local_status, global_status;
@@ -323,22 +334,22 @@ iteration(vb_instance_t      * instance,
     total_time = 0;
 
     /* Scramble the program indices if we want random orders in each instance */
-    if (concurrency_mode == 'r') {
-        generate_random_permutation(nr_programs_per_iteration, program_indices, true);
+    if (os_info->concurrency_mode == 'r') {
+        generate_random_permutation(os_info->nr_programs_per_iteration, program_indices, true);
     }
 
     /* Nothing's failed (yet ...) */
-    program_list->last_failed_program = -1;
+    os_info->program_list->last_failed_program = -1;
 
-    for (i = 0; i < nr_programs_per_iteration; i++) {
-        vb_program_t * program = &(program_list->program_list[program_indices[i]]);
+    for (i = 0; i < os_info->nr_programs_per_iteration; i++) {
+        vb_program_t * program = &(os_info->program_list->program_list[program_indices[i]]);
         
         if (dry_run) {
             assert(program->status == VB_INITING);
 
-            exec_and_check_program(instance, program, execution_mode, &time, &local_status, &global_status, scall_info_arr);
+            exec_and_check_program(instance, program, os_info->execution_mode, &time, &local_status, &global_status, os_info->syscall_arr);
             if (local_status != 0) {
-                program_list->last_failed_program = program_indices[i];
+                os_info->program_list->last_failed_program = program_indices[i];
             }
 
             if (global_status != 0) {
@@ -347,9 +358,9 @@ iteration(vb_instance_t      * instance,
         } else {
             assert(program->status == VB_ENABLED);
 
-            local_status = exec_program(instance, program, execution_mode, &time, &(scall_info_arr[i*MAX_SYSCALLS]));
+            local_status = exec_program(instance, program, os_info->execution_mode, &time, &(os_info->syscall_arr[i*MAX_SYSCALLS]));
             if (local_status != 0) {
-                program_list->last_failed_program = program_indices[i];
+                os_info->program_list->last_failed_program = program_indices[i];
                 total_errors += 1;
             }
         }
@@ -364,42 +375,18 @@ iteration(vb_instance_t      * instance,
 
     *time_p = total_time;
     return global_status;
-}
-
-static int
-init_syscall_info_file(vb_instance_t * instance)
-{
-    int status;
-
-    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(csv_filename, VB_FMT_LEN, "%s", instance->fmt_str);
-    strncat(csv_filename, "-syscalls.csv", VB_SUFFIX_LEN);
-
-    csv_file = fopen(csv_filename, "w");
-    if (csv_file == NULL) {
-        vb_error_root("Could not create csv file %s\n", csv_filename);
-        return VB_GENERIC_ERROR;
-    }
-
-    fprintf(csv_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
-    fflush(csv_file);
-
-    return VB_SUCCESS;
-}
-                      
+}                     
 
 static int
 gather_syscall_info(vb_instance_t     * instance,
-                    vb_program_list_t * program_list,
+                    vb_os_info_t      * os_info,
                     int               * program_indices,
-                    int                 nr_programs_per_iteration,
-                    unsigned long long  iteration,
-                    syscall_info      * scall_info_arr)
+                    unsigned long long  iteration)
 {
     vb_rank_info_t * rank_info = &(instance->rank_info);
     unsigned int id            = rank_info->global_id;
     unsigned int num_instances = rank_info->num_instances;
-    syscall_info * global_arr  = NULL;
+    vb_syscall_info_t * global_arr  = NULL;
     int * global_program_indices = NULL;
     int program_off;
 
@@ -412,7 +399,7 @@ gather_syscall_info(vb_instance_t     * instance,
             return VB_GENERIC_ERROR;
         }
 
-        global_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS * num_instances);
+        global_arr = malloc(sizeof(vb_syscall_info_t) * MAX_SYSCALLS * num_instances);
         if (!global_arr) {
             vb_error_root("Out of memory\n");
             free(global_program_indices);
@@ -430,9 +417,9 @@ gather_syscall_info(vb_instance_t     * instance,
             1
         };
         MPI_Aint array_of_displacements[] = {
-            offsetof(syscall_info, syscall_number), 
-            offsetof(syscall_info, ret_val), 
-            offsetof(syscall_info, nsecs),
+            offsetof(vb_syscall_info_t, syscall_number), 
+            offsetof(vb_syscall_info_t, ret_val), 
+            offsetof(vb_syscall_info_t, nsecs),
         };
         MPI_Datatype array_of_types[] = {
             MPI_SHORT,
@@ -457,8 +444,8 @@ gather_syscall_info(vb_instance_t     * instance,
     /* Gather syscall data for one program at a time, so as to limit the size
      * of the array we need to allocate at root
      */
-    for (program_off = 0; program_off < nr_programs_per_iteration; program_off++) {
-        syscall_info * send_buf = &(scall_info_arr[program_off * MAX_SYSCALLS]);
+    for (program_off = 0; program_off < os_info->nr_programs_per_iteration; program_off++) {
+        vb_syscall_info_t * send_buf = &(os_info->syscall_arr[program_off * MAX_SYSCALLS]);
 
         /* First, gather the program indices */
         MPI_Gather(
@@ -489,30 +476,51 @@ gather_syscall_info(vb_instance_t     * instance,
             unsigned int rid;
             unsigned int syscall_off;
             unsigned int syscall_nr;
+            unsigned long long rank_time;
 
             for (rid = 0; rid < num_instances; rid++) {
                 syscall_nr = 0;
+                rank_time  = 0;
+
                 for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
-                    syscall_info * syscall = &(global_arr[rid * MAX_SYSCALLS + syscall_off]);
+                    vb_syscall_info_t * syscall = &(global_arr[rid * MAX_SYSCALLS + syscall_off]);
 
                     if (syscall->syscall_number != NO_SYSCALL) {
-                        /* print format:
-                         *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,nsecs
-                         */
-                        fprintf(csv_file, "%d,%llu,%s,%d,%d,%li,%llu\n",
-                            rid,
-                            iteration,
-                            program_list->program_list[global_program_indices[rid]].name,
-                            syscall_nr++,
-                            syscall->syscall_number,
-                            syscall->ret_val,
-                            syscall->nsecs
-                        );
+                        if (os_info->generate_program_csv) {
+                            rank_time += syscall->nsecs;
+                        }
+
+                        if (os_info->generate_syscall_csv) {
+                            /* CSV format:
+                             *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,nsecs
+                             */
+                            fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu\n",
+                                rid,
+                                iteration,
+                                os_info->program_list->program_list[global_program_indices[rid]].name,
+                                syscall_nr++,
+                                syscall->syscall_number,
+                                syscall->ret_val,
+                                syscall->nsecs
+                            );
+                        }
                     }
+                }
+
+                if (os_info->generate_program_csv) {
+                    /* CSV format:
+                     *  rank_id,iteration,program_id,nsecs
+                     */
+                     fprintf(os_info->program_file, "%d,%llu,%s,%llu\n",
+                        rid,
+                        iteration,
+                        os_info->program_list->program_list[global_program_indices[rid]].name,
+                        rank_time
+                    );
                 }
             }
 
-            fflush(csv_file);
+            fflush(os_info->syscall_file);
         }
     }
 
@@ -526,20 +534,16 @@ gather_syscall_info(vb_instance_t     * instance,
 
 static int
 __run_kernel(vb_instance_t     * instance,
+             vb_os_info_t      * os_info,
              unsigned long long  iterations,
-             vb_program_list_t * program_list,
-             char                concurrency_mode,
-             char                execution_mode,
-             int                 nr_programs_per_iteration,
              int               * program_indices)
 {
     unsigned long long iter, time;
     int fd, status, i;
     int dummy, failure_count;
     syzkaller_prototype_t prototype;
-    syscall_info * scall_info_arr;
 
-    status = allocate_shared_mapping(&scall_info_arr, nr_programs_per_iteration);
+    status = allocate_shared_mapping(&(os_info->syscall_arr), os_info->nr_programs_per_iteration);
     if (status != VB_SUCCESS){
         vb_error("Failed to allocate syscall array\n");
         return VB_GENERIC_ERROR;
@@ -558,15 +562,14 @@ __run_kernel(vb_instance_t     * instance,
     for (iter = 0; iter < iterations; iter++) {
         do {
             /* re-init the syscall array before each iteration */
-            for (i = 0; i < nr_programs_per_iteration * MAX_SYSCALLS; i++) {
-                scall_info_arr[i].syscall_number = NO_SYSCALL;
+            for (i = 0; i < os_info->nr_programs_per_iteration * MAX_SYSCALLS; i++) {
+                os_info->syscall_arr[i].syscall_number = NO_SYSCALL;
             }
 
             MPI_Barrier(MPI_COMM_WORLD);
 
             /* execute all programs in the set */
-            dummy = iteration(instance, program_list, concurrency_mode, execution_mode, 
-                    nr_programs_per_iteration, program_indices, false, &time, scall_info_arr);
+            dummy = iteration(instance, os_info, program_indices, false, &time);
 
             if (dummy != 0) {
                 vb_print_root("Iteration %llu failed\n", iter);
@@ -585,16 +588,14 @@ __run_kernel(vb_instance_t     * instance,
                     if (instance->rank_info.global_id == 0) {
                         if (vb_abort_kernel(instance) != VB_SUCCESS) {
                             vb_error_root("Failed to abort kernel. Bailing out of program entirely\n");
-                            free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
+                            free_shared_mapping(os_info->syscall_arr, os_info->nr_programs_per_iteration);
                             return VB_GENERIC_ERROR;
                         }
-
-                        /* truncate the syscall info csv */
 
                     }
 
                     /* Restart */
-                    free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
+                    free_shared_mapping(os_info->syscall_arr, os_info->nr_programs_per_iteration);
                     return VB_OS_RESTART;
                 }
 
@@ -607,21 +608,24 @@ __run_kernel(vb_instance_t     * instance,
         status = vb_gather_kernel_results_time_spent(instance, iter, time);
         if (status != 0) {
             vb_error("Could not gather kernel results\n");
-            free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
+            free_shared_mapping(os_info->syscall_arr, os_info->nr_programs_per_iteration);
             return status;
         }
 
-        /* Gather the system call information */
-        status = gather_syscall_info(instance, program_list, program_indices,
-                nr_programs_per_iteration, iter, scall_info_arr);
-        if (status != 0) {
-            vb_error("Could not gather kernel syscall results\n");
-            free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
-            return status;
+        /* Gather the system call information, if we are generating either per program or per syscall
+         * CSVs
+         */
+        if (os_info->generate_syscall_csv || os_info->generate_program_csv) {
+            status = gather_syscall_info(instance, os_info, program_indices, iter);
+            if (status != 0) {
+                vb_error("Could not gather kernel syscall results\n");
+                free_shared_mapping(os_info->syscall_arr, os_info->nr_programs_per_iteration);
+                return status;
+            }
         }
     }
 
-    free_shared_mapping(scall_info_arr, nr_programs_per_iteration);
+    free_shared_mapping(os_info->syscall_arr, os_info->nr_programs_per_iteration);
 
     return VB_SUCCESS;
 }
@@ -797,10 +801,7 @@ disable_failed_programs(vb_instance_t     * instance,
 
 static int
 derive_program_set(vb_instance_t     * instance,
-                   vb_program_list_t * program_list,
-                   char                concurrency_mode,
-                   int                 nr_programs_per_iteration,
-                   int                 selection_seed,
+                   vb_os_info_t      * os_info,
                    int              ** success_indices_p)
 {
     int   i, status, local_status, global_status, successful;
@@ -810,21 +811,21 @@ derive_program_set(vb_instance_t     * instance,
 
     /* Root broadcast selection seed */
     MPI_Bcast(
-        &selection_seed,
+        &(os_info->selection_seed),
         1,
         MPI_UNSIGNED,
         0,
         MPI_COMM_WORLD
     );
 
-    success_indices = malloc(sizeof(int) * nr_programs_per_iteration);
+    success_indices = malloc(sizeof(int) * os_info->nr_programs_per_iteration);
     if (!success_indices) {
         vb_error("Out of memory\n");
         return VB_GENERIC_ERROR;
     }
     
-    syscall_info *scall_info_arr = malloc(sizeof(syscall_info) * MAX_SYSCALLS);
-    if (!scall_info_arr){
+    os_info->syscall_arr = malloc(sizeof(vb_syscall_info_t) * MAX_SYSCALLS);
+    if (!os_info->syscall_arr){
         vb_error("Out of memory\n");
         free(success_indices);
         return VB_GENERIC_ERROR;
@@ -838,26 +839,26 @@ derive_program_set(vb_instance_t     * instance,
      */
 
     /* (1) */
-    srand(selection_seed);
-    permutation = malloc(sizeof(int) * program_list->nr_programs);
+    srand(os_info->selection_seed);
+    permutation = malloc(sizeof(int) * os_info->program_list->nr_programs);
     if (!permutation) {
         vb_error("Out of memory\n");
         free(success_indices);
-        free(scall_info_arr);
+        free(os_info->syscall_arr);
         return VB_GENERIC_ERROR;
     }
-    generate_random_permutation(program_list->nr_programs, permutation, false); 
+    generate_random_permutation(os_info->program_list->nr_programs, permutation, false); 
 
     do {
 
         vb_print_root("Deriving set of programs ...\n");
 
         for ( i = 0, successful = 0;
-             (i < program_list->nr_programs) && (successful < nr_programs_per_iteration);
+             (i < os_info->program_list->nr_programs) && (successful < os_info->nr_programs_per_iteration);
               i++
             ) 
         {
-            vb_program_t * program = &(program_list->program_list[permutation[i]]);
+            vb_program_t * program = &(os_info->program_list->program_list[permutation[i]]);
 
             /* Program could be permanently disabled */
             if (program->status == VB_DISABLED)
@@ -866,7 +867,7 @@ derive_program_set(vb_instance_t     * instance,
             MPI_Barrier(MPI_COMM_WORLD);
 
             /* (2) (always run via 'fork' when probing the corpus) */
-            exec_and_check_program(instance, program, 'f', &time, &local_status, &global_status, scall_info_arr);
+            exec_and_check_program(instance, program, 'f', &time, &local_status, &global_status, os_info->syscall_arr);
 
             /* (3) */
             if (global_status != 0) {
@@ -881,41 +882,42 @@ derive_program_set(vb_instance_t     * instance,
 
                 vb_debug_root("Program %s succeeded on all %d instances. Found %d out of %d programs\n",
                     program->name, instance->rank_info.num_instances,
-                    successful, nr_programs_per_iteration 
+                    successful, os_info->nr_programs_per_iteration 
                 );
             }
         }
 
-        if (successful != nr_programs_per_iteration) {
+        if (successful != os_info->nr_programs_per_iteration) {
             vb_error_root("Only found %d successful programs out of %d requested\n", 
-                successful, nr_programs_per_iteration);
+                successful, os_info->nr_programs_per_iteration);
 
             free(permutation);
             free(success_indices);
-            free(scall_info_arr);
+            free(os_info->syscall_arr);
             return VB_GENERIC_ERROR;
         }
 
         /* Re-seed our random number generator with our local instance ID + the global seed */
-        srand(selection_seed + instance->rank_info.local_id);
+        srand(os_info->selection_seed + instance->rank_info.local_id);
 
         /***** Test this corpus, and proceed if and only if it works *****/
         vb_print_root("Testing program corpus to make sure at least %d iterations succeed ...\n", TEST_ITERATION_CNT);
         {
             int i = 0;
+            bool old_exec;
 
             for (i = 0; i < TEST_ITERATION_CNT; i++) {
-                status = iteration(instance, program_list, concurrency_mode, 'f', 
-                        nr_programs_per_iteration, success_indices, true, &time, scall_info_arr);
+                /* disable 'direct' execution during dry runs */
+                status = iteration(instance, os_info, success_indices, true, &time);
 
                 if (status) {
                     int st;
-                    st = disable_failed_programs(instance, program_list);
+                    st = disable_failed_programs(instance, os_info->program_list);
                     if (st != VB_SUCCESS) {
                         vb_error("Could not disable programs\n");
                         free(permutation);
                         free(success_indices);
-                        free(scall_info_arr);
+                        free(os_info->syscall_arr);
                         return VB_GENERIC_ERROR;
                     }
 
@@ -934,13 +936,14 @@ derive_program_set(vb_instance_t     * instance,
 
     vb_print_root("Corpus succeeded\n");
     free(permutation);
-    free(scall_info_arr);
+    free(os_info->syscall_arr);
+
     /* Enable everything in the success list */
-    for (i = 0; i < nr_programs_per_iteration; i++) {
-        vb_program_t * program = &(program_list->program_list[success_indices[i]]);
+    for (i = 0; i < os_info->nr_programs_per_iteration; i++) {
+        vb_program_t * program = &(os_info->program_list->program_list[success_indices[i]]);
         program->status = VB_ENABLED;
     }
-    program_list->nr_programs_enabled = nr_programs_per_iteration;
+    os_info->program_list->nr_programs_enabled = os_info->nr_programs_per_iteration;
 
     *success_indices_p = success_indices;
 
@@ -948,11 +951,9 @@ derive_program_set(vb_instance_t     * instance,
 }
 
 static void 
-save_program_info(vb_instance_t     * instance,
-                  vb_program_list_t * program_list,
-                  int                 nr_programs_per_iteration,
-                  int               * program_indices,
-                  int                 selection_seed)
+save_program_info(vb_instance_t * instance,
+                  vb_os_info_t  * os_info,
+                  int           * program_indices)
 {
     /* First, add in the seed */
     {
@@ -961,7 +962,7 @@ save_program_info(vb_instance_t     * instance,
         char * vals[1];
 
         names[0] = seed;
-        asprintf(&(vals[0]), "%d", selection_seed);
+        asprintf(&(vals[0]), "%d", os_info->selection_seed);
 
         vb_add_misc_meta_info(instance, "operating_system_misc", "selection_seed", 1, names, vals);
 
@@ -975,19 +976,19 @@ save_program_info(vb_instance_t     * instance,
         char name[] = "name";
         int i;
 
-        names = malloc(sizeof(char *) * nr_programs_per_iteration);
+        names = malloc(sizeof(char *) * os_info->nr_programs_per_iteration);
         assert(names);
 
-        vals = malloc(sizeof(char *) * nr_programs_per_iteration);
+        vals = malloc(sizeof(char *) * os_info->nr_programs_per_iteration);
         assert(vals);
 
-        for (i = 0; i < nr_programs_per_iteration; i++) {
-            vb_program_t * program = &(program_list->program_list[program_indices[i]]);
+        for (i = 0; i < os_info->nr_programs_per_iteration; i++) {
+            vb_program_t * program = &(os_info->program_list->program_list[program_indices[i]]);
             names[i] = name;
             vals[i]  = (char *)program->name;
         }
 
-        vb_add_misc_meta_info(instance, "programs", "program", nr_programs_per_iteration, names, vals);
+        vb_add_misc_meta_info(instance, "programs", "program", os_info->nr_programs_per_iteration, names, vals);
 
         free(names);
         free(vals);
@@ -997,19 +998,15 @@ save_program_info(vb_instance_t     * instance,
 
 static int
 run_kernel(vb_instance_t    * instance,
-           unsigned long long iterations,
-           char             * json_file,
-           char               concurrency_mode,
-           char               execution_mode,
-           int                nr_programs_per_iteration,
-           int                selection_seed)
+           vb_os_info_t     * os_info,
+           unsigned long long iterations)
 {
     int i, status, global_seed, nr_programs;
     int * program_indices;
     cJSON * json_obj, *program_dict, * true_list;
     void * lib_handle;
     struct sigaction act, old_act;
-    vb_program_list_t * program_list;
+    char saved_exec_mode;
 
     /* Catch SIGALRM */
     act.sa_handler = alrm;
@@ -1030,7 +1027,7 @@ run_kernel(vb_instance_t    * instance,
     }
 
     /* Get JSON object describing programs */
-    status = get_json_object(instance, json_file, &json_obj);
+    status = get_json_object(instance, os_info->json_file, &json_obj);
     if (status != VB_SUCCESS) {
         vb_error("Unable to build JSON object\n");
         return status;
@@ -1050,7 +1047,7 @@ run_kernel(vb_instance_t    * instance,
     }
 
     /* Build list of programs to execute */
-    status = build_vb_program_list(true_list, lib_handle, &program_list);
+    status = build_vb_program_list(true_list, lib_handle, &(os_info->program_list));
     if (status != VB_SUCCESS) {
         vb_error("Unable to build program list\n");
         goto out_json;
@@ -1060,57 +1057,96 @@ run_kernel(vb_instance_t    * instance,
     /* Do this until we get a successful program run */
     do {
         /* Disable any failed programs */
-        status = disable_failed_programs(instance, program_list);
+        status = disable_failed_programs(instance, os_info->program_list);
         if (status != VB_SUCCESS) {
             vb_error("Unable to disable failed programs\n");
             goto out_prog_list;
         }
 
         /* To start, set everything to INITING, unless some programs are already disabled */
-        for (i = 0; i < program_list->nr_programs; i++) {
-            vb_program_t * program = &(program_list->program_list[i]);
+        for (i = 0; i < os_info->program_list->nr_programs; i++) {
+            vb_program_t * program = &(os_info->program_list->program_list[i]);
 
             if (program->status == VB_ENABLED)
                 program->status = VB_INITING;
         }
 
-        /* Derive set of programs to execute */
-        status = derive_program_set(instance, program_list, concurrency_mode, nr_programs_per_iteration, 
-                selection_seed, &program_indices);
+        /* Derive set of programs to execute
+         *   (first, disable 'direct' mode,
+         */
+        saved_exec_mode = os_info->execution_mode;
+        os_info->execution_mode = 'f';
+        status = derive_program_set(instance, os_info, &program_indices);
+        os_info->execution_mode = saved_exec_mode;
+
         if (status != VB_SUCCESS) {
             vb_error_root("Unable to derive set of successful programs\n");
             goto out_prog_list;
-        }
-
-        /* initialize the csv for syscall data, if we are root */
-        if (instance->rank_info.global_id == 0) {
-            status = init_syscall_info_file(instance);
-            if (status != VB_SUCCESS) {
-                vb_error_root("Could not initialize syscall CSV\n");
-                goto out_prog_list;
-            }
-        }
+        } 
         
         /* Run the kernel */
-        status = __run_kernel(instance, iterations, program_list, concurrency_mode, 
-                    execution_mode, nr_programs_per_iteration, program_indices);
+        status = __run_kernel(instance, os_info, iterations, program_indices);
             
         /* Store the program list in the XML */
         if ((status == VB_SUCCESS) && (instance->rank_info.global_id == 0)) {
-            save_program_info(instance, program_list, nr_programs_per_iteration, program_indices, selection_seed);
+            save_program_info(instance, os_info, program_indices);
         }
 
         free(program_indices);
     } while (status == VB_OS_RESTART);
 
 out_prog_list:
-    free(program_list->program_list);
-    free(program_list);
+    free(os_info->program_list->program_list);
+    free(os_info->program_list);
 
 out_json:
     cJSON_Delete(json_obj);
 
     return status;
+}
+
+static int
+init_syscall_info_file(vb_instance_t * instance,
+                       vb_os_info_t  * os_info)
+{
+    int status;
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(os_info->syscall_filename, VB_FMT_LEN, "%s", instance->fmt_str);
+    strncat(os_info->syscall_filename, "-syscalls.csv", VB_SUFFIX_LEN);
+
+    os_info->syscall_file = fopen(os_info->syscall_filename, "w");
+    if (os_info->syscall_file == NULL) {
+        vb_error_root("Could not create csv file %s\n", os_info->syscall_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
+    fflush(os_info->syscall_file);
+
+    return VB_SUCCESS;
+}
+
+static int
+init_program_info_file(vb_instance_t * instance,
+                       vb_os_info_t  * os_info)
+{
+    int status;
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(os_info->program_filename, VB_FMT_LEN, "%s", instance->fmt_str);
+    strncat(os_info->program_filename, "-programs.csv", VB_SUFFIX_LEN);
+
+    os_info->program_file = fopen(os_info->program_filename, "w");
+    if (os_info->program_file == NULL) {
+        vb_error_root("Could not create csv file %s\n", os_info->program_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(os_info->program_file, "rank,iteration,program_id,nsecs\n");
+    fflush(os_info->program_file);
+
+    return VB_SUCCESS;
 }
 
 
@@ -1126,7 +1162,9 @@ usage(void)
         "       fork: instances fork off a child to execute the programs\n"
         "       direct: instances directly execute programs, and potentially die if they crash\n"
         "  arg 3: <number of programs per iteration>\n"
-        "  arg 4: <seed for random program selection order> (optional: default = time(NULL))\n"
+        "  arg 4: <generate program csv> (0/1)\n"
+        "  arg 5: <generate syscall csv> (0/1)\n"
+        "  arg 6: <seed for random program selection order> (optional: default = time(NULL))\n"
         );
 }
 
@@ -1138,10 +1176,13 @@ vb_kernel_operating_system(int             argc,
 {
     char * json_file, * program_id;
     char selection_mode, concurrency_mode, execution_mode;
+    bool program_csv, syscall_csv;
     int nr_programs_per_iter, selection_seed;
+    int status;
+    vb_os_info_t * os_info;
 
     /* Arg must be array size */
-    if (argc != 4 && argc != 5) {
+    if (argc != 6 && argc != 7) {
         usage();
         return VB_BAD_ARGS;
     }
@@ -1151,8 +1192,11 @@ vb_kernel_operating_system(int             argc,
     execution_mode       = argv[2][0];
     nr_programs_per_iter = atoi(argv[3]);
 
-    if (argc == 5) 
-        selection_seed = atoi(argv[4]);
+    program_csv = (atoi(argv[4]) == 1) ? true : false;
+    syscall_csv = (atoi(argv[5]) == 1) ? true : false;
+
+    if (argc == 7) 
+        selection_seed = atoi(argv[6]);
     else
         selection_seed = time(NULL);
 
@@ -1179,25 +1223,77 @@ vb_kernel_operating_system(int             argc,
             return VB_BAD_ARGS;
     }
 
+    os_info = malloc(sizeof(vb_os_info_t));
+    if (!os_info) {
+        vb_error("malloc() failed: %s\n", strerror(errno));
+        return VB_GENERIC_ERROR;
+    }
+
+    /* populate os_info */
+    memset(os_info, 0, sizeof(vb_os_info_t)); 
+    os_info->json_file = json_file;
+    os_info->concurrency_mode = concurrency_mode;
+    os_info->execution_mode  = execution_mode;
+    os_info->nr_programs_per_iteration = nr_programs_per_iter;
+    os_info->selection_seed = selection_seed;
+
+    os_info->generate_program_csv = program_csv;
+    os_info->generate_syscall_csv = syscall_csv;
+ 
+    /* initialize the csv for syscall data, if we are root */
+    if (instance->rank_info.global_id == 0) {
+        if (os_info->generate_syscall_csv) {
+            status = init_syscall_info_file(instance, os_info);
+            if (status != VB_SUCCESS) {
+                vb_error_root("Could not initialize syscall CSV\n");
+                goto out;
+            }
+        }
+
+        if (os_info->generate_program_csv) {
+            status = init_program_info_file(instance, os_info);
+            if (status != VB_SUCCESS) {
+                vb_error_root("Could not initialize program CSV\n");
+                goto out;
+            }
+        }
+    }
+
     vb_print_root("\nRunning operating_system\n"
         "  Num iterations    : %llu\n"
         "  JSON file         : %s\n"
         "  Concurrency mode  : %s\n"
         "  Execution mode    : %s\n"
         "  Programs per iter : %d\n"
-        "  Selection seed    : %d\n",
+        "  Selection seed    : %d\n"
+        "  Per-program CSV   : %s\n"
+        "  Per-syscall CSV   : %s\n",
         instance->options.num_iterations,
         json_file,
         (concurrency_mode == 's') ? "single"   : "random",
         (  execution_mode == 'd') ? "direct"   : "fork",
         nr_programs_per_iter,
-        selection_seed
+        selection_seed,
+        (program_csv) ? os_info->program_filename : "NULL",
+        (syscall_csv) ? os_info->syscall_filename : "NULL"
     );
 
-    return run_kernel(instance, instance->options.num_iterations, json_file,
-                concurrency_mode, execution_mode, nr_programs_per_iter,
-                selection_seed
-        );
+    status = run_kernel(instance, os_info, instance->options.num_iterations);
+
+out:
+    /* On failure, clear out program/syscall files */
+    if (status != VB_SUCCESS) {
+        if (os_info->program_file != NULL) {
+            unlink(os_info->program_filename);
+        }
+
+        if (os_info->syscall_file != NULL) {
+            unlink(os_info->syscall_filename);
+        }
+    }
+
+    free(os_info);
+    return status;
 }
 #else /* USE_CORPUS */
 int 
