@@ -27,6 +27,7 @@
 
 #include <cJSON.h>
 
+#define OS_MAX_FILE_LEN    1024
 #define NO_SYSCALL         1024
 #define VB_OS_RESTART      1024
 #define MAX_NAME_LEN       64
@@ -59,18 +60,21 @@ typedef struct {
 typedef struct {
     vb_program_list_t * program_list;
     char * json_file;
+    
+    char * toplevel_working_dir;
+    char active_working_dir[MAX_NAME_LEN];
 
     char concurrency_mode;
     char execution_mode;
     int  nr_programs_per_iteration;
     int  selection_seed;
 
-    bool   generate_program_csv;
-    char   program_filename[VB_FILE_LEN];
+    bool generate_program_csv;
+    char program_filename[OS_MAX_FILE_LEN];
     FILE * program_file;
 
-    bool   generate_syscall_csv;
-    char   syscall_filename[VB_FILE_LEN];
+    bool generate_syscall_csv;
+    char syscall_filename[OS_MAX_FILE_LEN];
     FILE * syscall_file;
 
     vb_syscall_info_t * syscall_arr;
@@ -120,8 +124,9 @@ init_syscall_info_file(vb_instance_t * instance,
     }
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->syscall_filename, VB_FMT_LEN, "%s", instance->fmt_str);
-    strncat(os_info->syscall_filename, "-syscalls.csv", VB_SUFFIX_LEN);
+    snprintf(os_info->syscall_filename, OS_MAX_FILE_LEN - 16, "%s/%s", 
+        os_info->toplevel_working_dir, instance->fmt_str);
+    strncat(os_info->syscall_filename, "-syscalls.csv", 16);
 
     os_info->syscall_file = fopen(os_info->syscall_filename, "w");
     if (os_info->syscall_file == NULL) {
@@ -146,8 +151,9 @@ init_program_info_file(vb_instance_t * instance,
     }
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->program_filename, VB_FMT_LEN, "%s", instance->fmt_str);
-    strncat(os_info->program_filename, "-programs.csv", VB_SUFFIX_LEN);
+    snprintf(os_info->program_filename, OS_MAX_FILE_LEN - 16, "%s/%s", 
+        os_info->toplevel_working_dir, instance->fmt_str);
+    strncat(os_info->program_filename, "-programs.csv", 16);
 
     os_info->program_file = fopen(os_info->program_filename, "w");
     if (os_info->program_file == NULL) {
@@ -162,7 +168,8 @@ init_program_info_file(vb_instance_t * instance,
 }
 
 static void
-call_fn(syzkaller_prototype_t fn,
+call_fn(vb_instance_t       * instance,
+        syzkaller_prototype_t fn,
         int                 * exit_status,
         int                 * normal_exit,
         struct timeval      * t1,
@@ -319,7 +326,7 @@ exec_program(vb_instance_t      * instance,
         program->fn(syscall_arr, &num_scalls);
         gettimeofday(&t2, NULL);
     } else {
-        call_fn(program->fn, &exit_status, &normal_exit, &t1, &t2, syscall_arr, &num_scalls);
+        call_fn(instance, program->fn, &exit_status, &normal_exit, &t1, &t2, syscall_arr, &num_scalls);
         if (!normal_exit) {
             vb_debug("Program %s exited via signal: %d (%s)\n", program->name, exit_status, strsignal(exit_status));
 
@@ -1263,6 +1270,7 @@ vb_kernel_operating_system(int             argc,
 
     /* populate os_info */
     memset(os_info, 0, sizeof(vb_os_info_t)); 
+
     os_info->json_file = json_file;
     os_info->concurrency_mode = concurrency_mode;
     os_info->execution_mode  = execution_mode;
@@ -1271,28 +1279,46 @@ vb_kernel_operating_system(int             argc,
 
     os_info->generate_program_csv = program_csv;
     os_info->generate_syscall_csv = syscall_csv;
-  
-    vb_print_root("\nRunning operating_system\n"
-        "  Num iterations    : %llu\n"
-        "  JSON file         : %s\n"
-        "  Concurrency mode  : %s\n"
-        "  Execution mode    : %s\n"
-        "  Programs per iter : %d\n"
-        "  Selection seed    : %d\n"
-        "  Per-program CSV   : %s\n"
-        "  Per-syscall CSV   : %s\n",
-        instance->options.num_iterations,
-        json_file,
-        (concurrency_mode == 's') ? "single"   : "random",
-        (  execution_mode == 'd') ? "direct"   : "fork",
-        nr_programs_per_iter,
-        selection_seed,
-        (program_csv) ? "Y" : "N",
-        (syscall_csv) ? "Y" : "N"
-    );
 
-    status = run_kernel(instance, os_info, instance->options.num_iterations);
+    os_info->toplevel_working_dir = get_current_dir_name();
+    if (os_info->toplevel_working_dir == NULL) {
+        vb_error("Could not determine toplevel working directory\n");
+        return VB_GENERIC_ERROR;
+    }
 
+    /* generate private working dir */
+    snprintf(os_info->active_working_dir, OS_MAX_FILE_LEN, "%s/.vb_os_%d", 
+        os_info->toplevel_working_dir,
+        instance->rank_info.local_id);
+
+    /* jump into working dir to run experiment */
+    assert(mkdir(os_info->active_working_dir, 0755) == 0);
+    assert(chdir(os_info->active_working_dir) == 0);
+    {
+        vb_print_root("\nRunning operating_system\n"
+            "  Num iterations    : %llu\n"
+            "  JSON file         : %s\n"
+            "  Concurrency mode  : %s\n"
+            "  Execution mode    : %s\n"
+            "  Programs per iter : %d\n"
+            "  Selection seed    : %d\n"
+            "  Per-program CSV   : %s\n"
+            "  Per-syscall CSV   : %s\n",
+            instance->options.num_iterations,
+            json_file,
+            (concurrency_mode == 's') ? "single"   : "random",
+            (  execution_mode == 'd') ? "direct"   : "fork",
+            nr_programs_per_iter,
+            selection_seed,
+            (program_csv) ? "Y" : "N",
+            (syscall_csv) ? "Y" : "N"
+        );
+
+        status = run_kernel(instance, os_info, instance->options.num_iterations);
+    }
+    rmdir(os_info->active_working_dir);
+    chdir(os_info->toplevel_working_dir);
+     
     /* On failure, clear out program/syscall files */
     if (status != VB_SUCCESS) {
         if (os_info->program_file != NULL) {
@@ -1304,6 +1330,7 @@ vb_kernel_operating_system(int             argc,
         }
     }
 
+    free(os_info->toplevel_working_dir);
     free(os_info);
     return status;
 }
