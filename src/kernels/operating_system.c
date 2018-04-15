@@ -76,6 +76,10 @@ typedef struct {
     vb_syscall_info_t * syscall_arr;
 } vb_os_info_t;
 
+
+/* Just here to cause EINTR to break us out of waitpid() */
+void alrm(int s) {}
+
 static int
 allocate_shared_mapping(vb_syscall_info_t ** syscall_arr,
                         int                  programs_per_iteration)
@@ -105,8 +109,57 @@ free_shared_mapping(vb_syscall_info_t * syscall_arr,
     munmap(syscall_arr, bytes);
 }
 
-/* Just here to cause EINTR to break us out of waitpid() */
-void alrm(int s) {}
+static int
+init_syscall_info_file(vb_instance_t * instance,
+                       vb_os_info_t  * os_info)
+{
+    int status;
+
+    if (os_info->syscall_file) {
+        fclose(os_info->syscall_file);
+    }
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(os_info->syscall_filename, VB_FMT_LEN, "%s", instance->fmt_str);
+    strncat(os_info->syscall_filename, "-syscalls.csv", VB_SUFFIX_LEN);
+
+    os_info->syscall_file = fopen(os_info->syscall_filename, "w");
+    if (os_info->syscall_file == NULL) {
+        vb_error_root("Could not create csv file %s\n", os_info->syscall_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
+    fflush(os_info->syscall_file);
+
+    return VB_SUCCESS;
+}
+
+static int
+init_program_info_file(vb_instance_t * instance,
+                       vb_os_info_t  * os_info)
+{
+    int status;
+
+    if (os_info->program_file) {
+        fclose(os_info->program_file);
+    }
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(os_info->program_filename, VB_FMT_LEN, "%s", instance->fmt_str);
+    strncat(os_info->program_filename, "-programs.csv", VB_SUFFIX_LEN);
+
+    os_info->program_file = fopen(os_info->program_filename, "w");
+    if (os_info->program_file == NULL) {
+        vb_error_root("Could not create csv file %s\n", os_info->program_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(os_info->program_file, "rank,iteration,program_id,nsecs\n");
+    fflush(os_info->program_file);
+
+    return VB_SUCCESS;
+}
 
 static void
 call_fn(syzkaller_prototype_t fn,
@@ -519,12 +572,16 @@ gather_syscall_info(vb_instance_t     * instance,
                     );
                 }
             }
-
-            fflush(os_info->syscall_file);
         }
     }
 
     if (id == 0) {
+        if (os_info->generate_syscall_csv) 
+            fflush(os_info->syscall_file);
+
+        if (os_info->generate_program_csv)
+            fflush(os_info->program_file);
+
         free(global_arr);
         free(global_program_indices);
     }
@@ -1056,6 +1113,25 @@ run_kernel(vb_instance_t    * instance,
 
     /* Do this until we get a successful program run */
     do {
+        /* reinit syscall/program files */
+        if (instance->rank_info.global_id == 0) {
+            if (os_info->generate_syscall_csv) {
+                status = init_syscall_info_file(instance, os_info);
+                if (status != VB_SUCCESS) {
+                    vb_error_root("Could not initialize syscall CSV\n");
+                    goto out_csv;
+                }
+            }
+
+            if (os_info->generate_program_csv) {
+                status = init_program_info_file(instance, os_info);
+                if (status != VB_SUCCESS) {
+                    vb_error_root("Could not initialize program CSV\n");
+                    goto out_csv;
+                }
+            }
+        }
+
         /* Disable any failed programs */
         status = disable_failed_programs(instance, os_info->program_list);
         if (status != VB_SUCCESS) {
@@ -1096,6 +1172,7 @@ run_kernel(vb_instance_t    * instance,
     } while (status == VB_OS_RESTART);
 
 out_prog_list:
+out_csv:
     free(os_info->program_list->program_list);
     free(os_info->program_list);
 
@@ -1103,50 +1180,6 @@ out_json:
     cJSON_Delete(json_obj);
 
     return status;
-}
-
-static int
-init_syscall_info_file(vb_instance_t * instance,
-                       vb_os_info_t  * os_info)
-{
-    int status;
-
-    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->syscall_filename, VB_FMT_LEN, "%s", instance->fmt_str);
-    strncat(os_info->syscall_filename, "-syscalls.csv", VB_SUFFIX_LEN);
-
-    os_info->syscall_file = fopen(os_info->syscall_filename, "w");
-    if (os_info->syscall_file == NULL) {
-        vb_error_root("Could not create csv file %s\n", os_info->syscall_filename);
-        return VB_GENERIC_ERROR;
-    }
-
-    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
-    fflush(os_info->syscall_file);
-
-    return VB_SUCCESS;
-}
-
-static int
-init_program_info_file(vb_instance_t * instance,
-                       vb_os_info_t  * os_info)
-{
-    int status;
-
-    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->program_filename, VB_FMT_LEN, "%s", instance->fmt_str);
-    strncat(os_info->program_filename, "-programs.csv", VB_SUFFIX_LEN);
-
-    os_info->program_file = fopen(os_info->program_filename, "w");
-    if (os_info->program_file == NULL) {
-        vb_error_root("Could not create csv file %s\n", os_info->program_filename);
-        return VB_GENERIC_ERROR;
-    }
-
-    fprintf(os_info->program_file, "rank,iteration,program_id,nsecs\n");
-    fflush(os_info->program_file);
-
-    return VB_SUCCESS;
 }
 
 
@@ -1157,7 +1190,7 @@ usage(void)
         "  arg 0: <path to corpus json file>\n"
         "  arg 1: <concurrency mode>: 's' OR 'r' (single or random)\n"
         "       single: each instance concurrently executes the same program order\n"
-        "       ramdom: each instance concurrently executes a random program order\n"
+        "       random: each instance concurrently executes a random program order\n"
         "  arg 2: <execution mode>: 'f' OR 'd' (fork or direct)\n"
         "       fork: instances fork off a child to execute the programs\n"
         "       direct: instances directly execute programs, and potentially die if they crash\n"
@@ -1181,7 +1214,6 @@ vb_kernel_operating_system(int             argc,
     int status;
     vb_os_info_t * os_info;
 
-    /* Arg must be array size */
     if (argc != 6 && argc != 7) {
         usage();
         return VB_BAD_ARGS;
@@ -1239,26 +1271,7 @@ vb_kernel_operating_system(int             argc,
 
     os_info->generate_program_csv = program_csv;
     os_info->generate_syscall_csv = syscall_csv;
- 
-    /* initialize the csv for syscall data, if we are root */
-    if (instance->rank_info.global_id == 0) {
-        if (os_info->generate_syscall_csv) {
-            status = init_syscall_info_file(instance, os_info);
-            if (status != VB_SUCCESS) {
-                vb_error_root("Could not initialize syscall CSV\n");
-                goto out;
-            }
-        }
-
-        if (os_info->generate_program_csv) {
-            status = init_program_info_file(instance, os_info);
-            if (status != VB_SUCCESS) {
-                vb_error_root("Could not initialize program CSV\n");
-                goto out;
-            }
-        }
-    }
-
+  
     vb_print_root("\nRunning operating_system\n"
         "  Num iterations    : %llu\n"
         "  JSON file         : %s\n"
@@ -1274,13 +1287,12 @@ vb_kernel_operating_system(int             argc,
         (  execution_mode == 'd') ? "direct"   : "fork",
         nr_programs_per_iter,
         selection_seed,
-        (program_csv) ? os_info->program_filename : "NULL",
-        (syscall_csv) ? os_info->syscall_filename : "NULL"
+        (program_csv) ? "Y" : "N",
+        (syscall_csv) ? "Y" : "N"
     );
 
     status = run_kernel(instance, os_info, instance->options.num_iterations);
 
-out:
     /* On failure, clear out program/syscall files */
     if (status != VB_SUCCESS) {
         if (os_info->program_file != NULL) {
