@@ -33,7 +33,7 @@
 #define NO_SYSCALL          1024
 #define VB_OS_RESTART       1024
 #define TEST_ITERATION_CNT  1
-#define PROGRAM_WAIT_TIME   1
+#define PROGRAM_WAIT_TIME   2
 
 //#define VB_NO_CHECK
 
