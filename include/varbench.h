@@ -31,7 +31,7 @@
 #include <papi.h>
 #endif
 
-#define MAX_NAME_LEN 64
+#define MAX_NAME_LEN 256
 
 typedef struct varbench_options {
     char               kernel_name[MAX_NAME_LEN];

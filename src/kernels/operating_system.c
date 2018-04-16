@@ -16,21 +16,22 @@
 #include <math.h>
 #include <float.h>
 #include <limits.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <dirent.h>
 
 #include <varbench.h>
 #include <libsyzcorpus.h>
 
 #include <cJSON.h>
 
-#define OS_MAX_FILE_LEN    1024
 #define NO_SYSCALL         1024
 #define VB_OS_RESTART      1024
-#define MAX_NAME_LEN       64
 #define TEST_ITERATION_CNT 1
 
 //#define VB_NO_CHECK
@@ -59,9 +60,9 @@ typedef struct {
 
 typedef struct {
     vb_program_list_t * program_list;
-    char * json_file;
-    
     char * toplevel_working_dir;
+
+    char json_file[MAX_NAME_LEN];
     char active_working_dir[MAX_NAME_LEN];
 
     char concurrency_mode;
@@ -70,11 +71,11 @@ typedef struct {
     int  selection_seed;
 
     bool generate_program_csv;
-    char program_filename[OS_MAX_FILE_LEN];
+    char program_filename[MAX_NAME_LEN];
     FILE * program_file;
 
     bool generate_syscall_csv;
-    char syscall_filename[OS_MAX_FILE_LEN];
+    char syscall_filename[MAX_NAME_LEN];
     FILE * syscall_file;
 
     vb_syscall_info_t * syscall_arr;
@@ -83,6 +84,92 @@ typedef struct {
 
 /* Just here to cause EINTR to break us out of waitpid() */
 void alrm(int s) {}
+
+
+static pid_t
+get_ppid_of_pid(pid_t pid)
+{
+    char state, fname[32];
+    FILE * stat_f;
+    pid_t _pid, _ppid;
+
+    snprintf(fname, 32, "/proc/%d/stat", pid);
+
+    stat_f = fopen(fname, "r");
+    if (!stat_f) {
+        // vb_error("Could not open %s: %s\n", fname, strerror(errno));
+        return 1;
+    }
+
+    /* Take data from /proc/[pid]/stat, see URL below for more info */
+    /* http://man7.org/linux/man-pages/man5/proc.5.html */
+    fscanf(stat_f, "%d %*s %c %d", &_pid, &state, &_ppid);
+    fclose(stat_f);
+
+    /* If the pid in the file doesn't match, let's bail, because 
+     * I don't know what that implies
+     */
+    if (pid != _pid)
+        return 0;
+
+    return _ppid; 
+}
+
+static bool
+pid_is_descendant(pid_t pid,
+                  pid_t ancestor)
+{
+    if (pid <= 1)
+        return false;
+
+    if (pid == ancestor)
+        return true;
+
+    return pid_is_descendant(get_ppid_of_pid(pid), ancestor);
+}
+
+static void
+kill_all_descendants(pid_t parent)
+{
+    struct dirent * dent;
+    DIR * dir;
+    pid_t pid;
+    char state, fname[32];
+    FILE * stat_f;
+
+    /* Searches through all directories in /proc */
+    dir = opendir("/proc/");
+    while((dent = readdir(dir)) != NULL) {
+        /* If numerical */
+        if (dent->d_name[0] >= '0' && dent->d_name[0] <= '9') {
+            pid = atoi(dent->d_name);
+
+            /* let's not kill ourselves ... */
+            if (pid == parent)
+                continue;
+
+            snprintf(fname, 32, "/proc/%d/stat", pid);
+            stat_f = fopen(fname, "r");
+            if (!stat_f)
+                continue;
+
+            /* Take data from /proc/[pid]/stat, see URL below for more info */
+            /* http://man7.org/linux/man-pages/man5/proc.5.html */
+            fscanf(stat_f, "%*d %*s %c %*d", &state);
+            fclose(stat_f);
+
+            /* Process if it's a zombie */
+            if (state == 'Z') {
+                if (pid_is_descendant(pid, parent)) {
+                    vb_debug("Killing zombie descendant with pid %d\n", pid);
+                    kill(pid, SIGKILL);
+                    waitpid(pid, NULL, 0);
+                }
+            }
+        }
+    }
+    closedir(dir);
+}
 
 static int
 allocate_shared_mapping(vb_syscall_info_t ** syscall_arr,
@@ -124,7 +211,7 @@ init_syscall_info_file(vb_instance_t * instance,
     }
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->syscall_filename, OS_MAX_FILE_LEN - 16, "%s/%s", 
+    snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/%s", 
         os_info->toplevel_working_dir, instance->fmt_str);
     strncat(os_info->syscall_filename, "-syscalls.csv", 16);
 
@@ -151,7 +238,7 @@ init_program_info_file(vb_instance_t * instance,
     }
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->program_filename, OS_MAX_FILE_LEN - 16, "%s/%s", 
+    snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/%s", 
         os_info->toplevel_working_dir, instance->fmt_str);
     strncat(os_info->program_filename, "-programs.csv", 16);
 
@@ -208,7 +295,7 @@ call_fn(vb_instance_t       * instance,
             setpgid(0, 0);
 
             /* Prevent any of my children from zombifying, because we are not going to wait for them */
-            signal(SIGCHLD, SIG_IGN);
+            // signal(SIGCHLD, SIG_IGN);
 
             /* Send my stdout/stderr to dev/null */
             devnl = open("/dev/null", 'w');
@@ -249,8 +336,8 @@ call_fn(vb_instance_t       * instance,
             /* Start timer */
             gettimeofday(t1, NULL);
 
-            /* Give it 3 seconds */
-            alarm(3);
+            /* Give it 1 second */
+            alarm(1);
 
             while (1) {
                 ret = waitpid(pid, &st, 0);
@@ -279,8 +366,8 @@ call_fn(vb_instance_t       * instance,
                 assert(2+2 != 4);
             }
 
-            /* Kill any could be grand-children (they don't need reaped) */
-            kill(-pid, SIGKILL);
+            /* Kill any could be grand-children */
+            //kill(-pid, SIGKILL);
 
             break;
     }
@@ -415,6 +502,8 @@ iteration(vb_instance_t      * instance,
             if (global_status != 0) {
                 return global_status;
             }
+
+            vb_debug_root("%dth (out of %d) program succeeded\n", i, os_info->nr_programs_per_iteration);
         } else {
             assert(program->status == VB_ENABLED);
 
@@ -434,6 +523,14 @@ iteration(vb_instance_t      * instance,
     }
 
     *time_p = total_time;
+
+out:
+    /* Reap possible grandchildren that could have been created during this set of programs
+     * We do this once per every program set, to prevent PID exhaustion over the course
+     * of many iterations.
+     */
+    kill_all_descendants(getpid());
+
     return global_status;
 }                     
 
@@ -1271,7 +1368,6 @@ vb_kernel_operating_system(int             argc,
     /* populate os_info */
     memset(os_info, 0, sizeof(vb_os_info_t)); 
 
-    os_info->json_file = json_file;
     os_info->concurrency_mode = concurrency_mode;
     os_info->execution_mode  = execution_mode;
     os_info->nr_programs_per_iteration = nr_programs_per_iter;
@@ -1286,8 +1382,12 @@ vb_kernel_operating_system(int             argc,
         return VB_GENERIC_ERROR;
     }
 
+    snprintf(os_info->json_file, MAX_NAME_LEN, "%s/%s",
+        os_info->toplevel_working_dir,
+        json_file);
+
     /* generate private working dir */
-    snprintf(os_info->active_working_dir, OS_MAX_FILE_LEN, "%s/.vb_os_%d", 
+    snprintf(os_info->active_working_dir, MAX_NAME_LEN, "%s/.vb_os_%d", 
         os_info->toplevel_working_dir,
         instance->rank_info.local_id);
 
