@@ -30,9 +30,10 @@
 
 #include <cJSON.h>
 
-#define NO_SYSCALL         1024
-#define VB_OS_RESTART      1024
-#define TEST_ITERATION_CNT 1
+#define NO_SYSCALL          1024
+#define VB_OS_RESTART       1024
+#define TEST_ITERATION_CNT  1
+#define PROGRAM_WAIT_TIME   1
 
 //#define VB_NO_CHECK
 
@@ -61,8 +62,8 @@ typedef struct {
 typedef struct {
     vb_program_list_t * program_list;
     char * toplevel_working_dir;
+    char * json_file;
 
-    char json_file[MAX_NAME_LEN];
     char active_working_dir[MAX_NAME_LEN];
 
     char concurrency_mode;
@@ -336,8 +337,8 @@ call_fn(vb_instance_t       * instance,
             /* Start timer */
             gettimeofday(t1, NULL);
 
-            /* Give it 1 second */
-            alarm(1);
+            /* Give it some time*/
+            alarm(PROGRAM_WAIT_TIME);
 
             while (1) {
                 ret = waitpid(pid, &st, 0);
@@ -1379,12 +1380,17 @@ vb_kernel_operating_system(int             argc,
     os_info->toplevel_working_dir = get_current_dir_name();
     if (os_info->toplevel_working_dir == NULL) {
         vb_error("Could not determine toplevel working directory\n");
+        free(os_info);
         return VB_GENERIC_ERROR;
     }
 
-    snprintf(os_info->json_file, MAX_NAME_LEN, "%s/%s",
-        os_info->toplevel_working_dir,
-        json_file);
+    /* Get full path of json file */
+    os_info->json_file = realpath(json_file, NULL);
+    if (os_info->json_file == NULL) {
+        vb_error("Could not determine full path of json file %s\n", json_file);
+        free(os_info);
+        return VB_GENERIC_ERROR;
+    }
 
     /* generate private working dir */
     snprintf(os_info->active_working_dir, MAX_NAME_LEN, "%s/.vb_os_%d", 
@@ -1405,7 +1411,7 @@ vb_kernel_operating_system(int             argc,
             "  Per-program CSV   : %s\n"
             "  Per-syscall CSV   : %s\n",
             instance->options.num_iterations,
-            json_file,
+            os_info->json_file,
             (concurrency_mode == 's') ? "single"   : "random",
             (  execution_mode == 'd') ? "direct"   : "fork",
             nr_programs_per_iter,
@@ -1431,7 +1437,9 @@ vb_kernel_operating_system(int             argc,
     }
 
     free(os_info->toplevel_working_dir);
+    free(os_info->json_file);
     free(os_info);
+
     return status;
 }
 #else /* USE_CORPUS */
