@@ -31,7 +31,13 @@ make OPERATING_SYSTEM=default
 This will allow you to run a kernel that does nothing but issue system
 calls.
 
+__Disclaimer__: the operating system stressor kernel leverages the system
+call fuzzer [Syzkaller](https://github.com/google/syzkaller) to build
+workloads that only issue system calls. __Be warned__: running this workload
+may crash your operating system kernel, particularly if it is old
+
 ### Running
+
 
 ```
 mpirun -np <n procs> [any other MPI options] ./varbench -k <kernel> [any other varbench options]
