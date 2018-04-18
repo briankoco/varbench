@@ -479,6 +479,8 @@ iteration(vb_instance_t      * instance,
     unsigned long long time, total_time;
     int i;
 
+    assert(chdir(os_info->active_working_dir) == 0);
+
     total_time = 0;
 
     /* Scramble the program indices if we want random orders in each instance */
@@ -501,7 +503,7 @@ iteration(vb_instance_t      * instance,
             }
 
             if (global_status != 0) {
-                return global_status;
+                goto out;
             }
 
             vb_debug_root("%dth (out of %d) program succeeded\n", i, os_info->nr_programs_per_iteration);
@@ -526,11 +528,12 @@ iteration(vb_instance_t      * instance,
     *time_p = total_time;
 
 out:
-    /* Reap possible grandchildren that could have been created during this set of programs
-     * We do this once per every program set, to prevent PID exhaustion over the course
-     * of many iterations.
+    /* Reap possible grandchildren that could have been created during this set
+     * of programs We do this once per every program set, to prevent PID
+     * exhaustion over the course of many iterations.
      */
     kill_all_descendants(getpid());
+    assert(chdir(os_info->toplevel_working_dir) == 0);
 
     return global_status;
 }                     
@@ -1029,7 +1032,11 @@ derive_program_set(vb_instance_t     * instance,
             MPI_Barrier(MPI_COMM_WORLD);
 
             /* (2) (always run via 'fork' when probing the corpus) */
-            exec_and_check_program(instance, program, 'f', &time, &local_status, &global_status, os_info->syscall_arr);
+            {
+                assert(chdir(os_info->active_working_dir) == 0);
+                exec_and_check_program(instance, program, 'f', &time, &local_status, &global_status, os_info->syscall_arr);
+                assert(chdir(os_info->toplevel_working_dir) == 0);
+            }
 
             /* (3) */
             if (global_status != 0) {
@@ -1287,6 +1294,54 @@ out_json:
     return status;
 }
 
+/* 
+ * glibc does not provide a function to remove non-empty
+ * directories ... so we have to do it ourselves 
+ */
+static void
+rm_working_dir(char * dir_name)
+{
+    DIR * dir;
+    struct dirent * dent;
+    int status;
+
+    if (chdir(dir_name) != 0) {
+        vb_error("Could not chdir to %s: %s. Current dir: %s\n", dir_name, strerror(errno),
+            get_current_dir_name());
+        return;
+    }
+
+    dir = opendir(dir_name);
+    while ((dent = readdir(dir)) != NULL) {
+        if (dent->d_type == DT_DIR) {
+            if ((strcmp(dent->d_name, ".") == 0) ||
+                (strcmp(dent->d_name, "..") == 0)
+               )
+            {
+                continue;
+            }
+
+            /* recursively delete subdirectory */
+            rm_working_dir(dent->d_name);
+        } else {
+            status = unlink(dent->d_name);
+
+            if (status != 0) {
+                vb_error("Could not remove file %s of type %d: %s\n",
+                    dent->d_name, dent->d_type, strerror(errno));
+            }
+        }
+    }
+
+    closedir(dir);
+
+    if (chdir("..") != 0) {
+        vb_error("Could not chdir to ..: %s\n", strerror(errno));
+    }
+
+    /* now remove the directory */
+    rmdir(dir_name);
+}
 
 static void
 usage(void)
@@ -1399,31 +1454,29 @@ vb_kernel_operating_system(int             argc,
 
     /* jump into working dir to run experiment */
     assert(mkdir(os_info->active_working_dir, 0755) == 0);
-    assert(chdir(os_info->active_working_dir) == 0);
-    {
-        vb_print_root("\nRunning operating_system\n"
-            "  Num iterations    : %llu\n"
-            "  JSON file         : %s\n"
-            "  Concurrency mode  : %s\n"
-            "  Execution mode    : %s\n"
-            "  Programs per iter : %d\n"
-            "  Selection seed    : %d\n"
-            "  Per-program CSV   : %s\n"
-            "  Per-syscall CSV   : %s\n",
-            instance->options.num_iterations,
-            os_info->json_file,
-            (concurrency_mode == 's') ? "single"   : "random",
-            (  execution_mode == 'd') ? "direct"   : "fork",
-            nr_programs_per_iter,
-            selection_seed,
-            (program_csv) ? "Y" : "N",
-            (syscall_csv) ? "Y" : "N"
-        );
 
-        status = run_kernel(instance, os_info, instance->options.num_iterations);
-    }
-    rmdir(os_info->active_working_dir);
-    chdir(os_info->toplevel_working_dir);
+    vb_print_root("\nRunning operating_system\n"
+        "  Num iterations    : %llu\n"
+        "  JSON file         : %s\n"
+        "  Concurrency mode  : %s\n"
+        "  Execution mode    : %s\n"
+        "  Programs per iter : %d\n"
+        "  Selection seed    : %d\n"
+        "  Per-program CSV   : %s\n"
+        "  Per-syscall CSV   : %s\n",
+        instance->options.num_iterations,
+        os_info->json_file,
+        (concurrency_mode == 's') ? "single"   : "random",
+        (  execution_mode == 'd') ? "direct"   : "fork",
+        nr_programs_per_iter,
+        selection_seed,
+        (program_csv) ? "Y" : "N",
+        (syscall_csv) ? "Y" : "N"
+    );
+
+    status = run_kernel(instance, os_info, instance->options.num_iterations);
+
+    rm_working_dir(os_info->active_working_dir);
      
     /* On failure, clear out program/syscall files */
     if (status != VB_SUCCESS) {
