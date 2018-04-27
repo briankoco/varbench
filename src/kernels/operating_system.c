@@ -571,8 +571,9 @@ gather_syscall_info(vb_instance_t     * instance,
     /* Definte MPI datatype for syscall info */
     {
         int ret, type_size;
-        int count = 3;
+        int count = 4;
         int array_of_blocklengths[] = {
+            1,
             1,
             1,
             1
@@ -586,6 +587,7 @@ gather_syscall_info(vb_instance_t     * instance,
         MPI_Datatype array_of_types[] = {
             MPI_SHORT,
             MPI_LONG_LONG_INT,
+            MPI_UNSIGNED_LONG_LONG,
             MPI_UNSIGNED_LONG_LONG
         };
 
