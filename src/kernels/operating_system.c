@@ -222,7 +222,7 @@ init_syscall_info_file(vb_instance_t * instance,
         return VB_GENERIC_ERROR;
     }
 
-    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,nsecs\n");
+    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,time_out\n");
     fflush(os_info->syscall_file);
 
     return VB_SUCCESS;
@@ -580,7 +580,8 @@ gather_syscall_info(vb_instance_t     * instance,
         MPI_Aint array_of_displacements[] = {
             offsetof(vb_syscall_info_t, syscall_number), 
             offsetof(vb_syscall_info_t, ret_val), 
-            offsetof(vb_syscall_info_t, nsecs),
+            offsetof(vb_syscall_info_t, time_in),
+            offsetof(vb_syscall_info_t, time_out),
         };
         MPI_Datatype array_of_types[] = {
             MPI_SHORT,
@@ -648,21 +649,22 @@ gather_syscall_info(vb_instance_t     * instance,
 
                     if (syscall->syscall_number != NO_SYSCALL) {
                         if (os_info->generate_program_csv) {
-                            rank_time += syscall->nsecs;
+                            rank_time += (syscall->time_out - syscall->time_in);
                         }
 
                         if (os_info->generate_syscall_csv) {
                             /* CSV format:
-                             *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,nsecs
+                             *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,time_in,time_out
                              */
-                            fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu\n",
+                            fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
                                 rid,
                                 iteration,
                                 os_info->program_list->program_list[global_program_indices[rid]].name,
                                 syscall_nr++,
                                 syscall->syscall_number,
                                 syscall->ret_val,
-                                syscall->nsecs
+                                syscall->time_in,
+                                syscall->time_out
                             );
                         }
                     }

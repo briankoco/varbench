@@ -12,10 +12,10 @@
 
 typedef struct {
 	int16_t syscall_number;
-    intptr_t ret_val;
-	unsigned long long nsecs;
+	intptr_t ret_val;
+	unsigned long long time_in;
+	unsigned long long time_out;
 } vb_syscall_info_t;
-
 
 /* Programs that succeed */
 int _9da3a47c615f58b328ed74dba0999170392a4fa9(vb_syscall_info_t * scall_info, int * num_calls);
@@ -7196,5 +7196,4 @@ int _c5f9c2b7879f99bd3d5bde124676f8b24a50b176(vb_syscall_info_t * scall_info, in
 /* Programs that fail or timeout */
 
 #endif
-
 

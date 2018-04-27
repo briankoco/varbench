@@ -14,11 +14,12 @@ header ="""
 #include <time.h> 
 #include <stdint.h>
 
-typedef struct{
+typedef struct {
 	int16_t syscall_number;
 	intptr_t ret_val;
-	unsigned long long nsecs;
-} syscall_info;
+	unsigned long long time_in;
+	unsigned long long time_out;
+} vb_syscall_info_t;
 """
 
 #Do this later
@@ -31,7 +32,7 @@ def parse_file(program_src):
 		s=[]
 		for line_number, line in enumerate(lines):
 			if 	("int _" in line) and ("(void);" in line): 
-				line = line.replace("void", "syscall_info *scall_info, int *num_calls")
+				line = line.replace("void", "vb_syscall_info_t * scall_info, int * num_calls")
 			if "#define __LIBSYZCORPUS_H__" in line:
 				line += header 
 

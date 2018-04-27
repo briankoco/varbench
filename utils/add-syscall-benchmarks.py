@@ -28,7 +28,7 @@ def parse_file(program_src):
 				line+="  " + "*num_calls = " + str(r_idx) + ";\n";
 				line ="  " + "struct timespec start, stop;\n" + line	
 			if 	("int _" in line) and ("(void) {" in line) and ("#include <string.h>" in prev_line): 
-				line = line.replace("void", "syscall_info *scall_info, int *num_calls")
+				line = line.replace("void", "vb_syscall_info_t * scall_info, int * num_calls")
 			#Replace every instance of 'r[i]' with 'scall_info[i].ret_val'
 			if "r[" in line:
 				line = line.replace("r[", "scall_info[")
@@ -38,7 +38,9 @@ def parse_file(program_src):
 				syscall_num = line.split()[2].strip("syscall(").strip(",").strip(';)')
 				line ="    "+"clock_gettime(CLOCK_MONOTONIC, &start);\n"+ line
 				line+="    "+"clock_gettime(CLOCK_MONOTONIC, &stop);\n"
-				line+="    "+"scall_info["+str(r_idx)+"].nsecs = TO_NSECS(stop.tv_sec,stop.tv_nsec) - TO_NSECS(start.tv_sec,start.tv_nsec);\n"
+				#line+="    "+"scall_info["+str(r_idx)+"].nsecs = TO_NSECS(stop.tv_sec,stop.tv_nsec) - TO_NSECS(start.tv_sec,start.tv_nsec);\n"
+				line+="    "+"scall_info["+str(r_idx)+"].time_in = TO_NSECS(start.tv_sec,start.tv_nsec);\n"
+				line+="    "+"scall_info["+str(r_idx)+"].time_out = TO_NSECS(stop.tv_sec,stop.tv_nsec);\n"
 				line+="    "+"scall_info["+str(r_idx)+"].syscall_number = " + syscall_num + ";\n"
 			s.append(line)
 			prev_line = line
