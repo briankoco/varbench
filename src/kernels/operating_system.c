@@ -222,7 +222,7 @@ init_syscall_info_file(vb_instance_t * instance,
         return VB_GENERIC_ERROR;
     }
 
-    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,time_out\n");
+    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,nsecs\n");
     fflush(os_info->syscall_file);
 
     return VB_SUCCESS;
@@ -648,15 +648,16 @@ gather_syscall_info(vb_instance_t     * instance,
 
                 for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
                     vb_syscall_info_t * syscall = &(global_arr[rid * MAX_SYSCALLS + syscall_off]);
+                    unsigned long long  latency = syscall->time_out - syscall->time_in;
 
                     if (syscall->syscall_number != NO_SYSCALL) {
                         if (os_info->generate_program_csv) {
-                            rank_time += (syscall->time_out - syscall->time_in);
+                            rank_time += latency;
                         }
 
                         if (os_info->generate_syscall_csv) {
                             /* CSV format:
-                             *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,time_in,time_out
+                             *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,time_in,nsecs
                              */
                             fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
                                 rid,
@@ -666,7 +667,7 @@ gather_syscall_info(vb_instance_t     * instance,
                                 syscall->syscall_number,
                                 syscall->ret_val,
                                 syscall->time_in,
-                                syscall->time_out
+                                latency
                             );
                         }
                     }
@@ -1301,6 +1302,8 @@ out_json:
 /* 
  * glibc does not provide a function to remove non-empty
  * directories ... so we have to do it ourselves 
+ *
+ * TODO: this is currently broken
  */
 static void
 rm_working_dir(char * dir_name)
@@ -1480,7 +1483,7 @@ vb_kernel_operating_system(int             argc,
 
     status = run_kernel(instance, os_info, instance->options.num_iterations);
 
-    rm_working_dir(os_info->active_working_dir);
+    // rm_working_dir(os_info->active_working_dir);
      
     /* On failure, clear out program/syscall files */
     if (status != VB_SUCCESS) {
