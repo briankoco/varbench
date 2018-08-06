@@ -26,7 +26,7 @@ vb_instance_t this_instance = { 0 };
 static void
 usage(void) 
 {
-    vb_print_root("Usage: varbench\n" \
+    printf("Usage: varbench\n" \
         " Required options:\n" \
         "  -k (--kernel=)<kernel>\n" \
         " Optional options:\n" \
@@ -93,7 +93,8 @@ vb_parse_cpu_list(char * cpu_list,
 }
 
 static int 
-vb_parse_options(int           * argc,
+vb_parse_options(int             mpi_rank,
+                 int           * argc,
                  char        *** argv,
                  vb_options_t  * opts)
 {
@@ -117,7 +118,7 @@ vb_parse_options(int           * argc,
             {"kernel",              required_argument,  0,  'k'},
             {"debug-on",            no_argument,        0,  'd'},
             {"list-kernels",        no_argument,        0,  'l'},
-            {"iterations",          no_argument,        0,  'i'},
+            {"iterations",          required_argument,  0,  'i'},
             {"processor-pin-by",    required_argument,  0,  'p'},
             {"cpu-list",            required_argument,  0,  'c'},
             {"memory-pin",          required_argument,  0,  'm'},
@@ -126,7 +127,7 @@ vb_parse_options(int           * argc,
             {0,                     0,                  0,  0}
         };
 
-        c = getopt_long_only(*argc, *argv, "hk:dli:p:m:c:t:b:",
+        c = getopt_long_only(*argc, *argv, "hk:dli:p:m:c:t:b:r",
                 long_options, &option_index);
 
         if (c == -1)
@@ -134,7 +135,8 @@ vb_parse_options(int           * argc,
 
         switch (c) {
             case 'h':
-                usage();
+                if (mpi_rank == 0)
+                    usage();
                 exit(EXIT_SUCCESS);
 
             case 'k':
@@ -147,7 +149,9 @@ vb_parse_options(int           * argc,
                 break;
 
             case 'l':
-                vb_print_root("Valid kernels:\n" \
+                if (mpi_rank == 0) {
+                    printf(\
+                    "Valid kernels:\n" \
                     "  hello_world\n" \
                     " Cache kernels:\n"
                     "  cache_coherence\n" \
@@ -164,7 +168,9 @@ vb_parse_options(int           * argc,
                     "  dgemm\n"
                     " Other:\n" \
                     "  operating_system\n"
-                );
+                    );
+                }
+
                 MPI_Finalize();
                 exit(EXIT_SUCCESS);
 
@@ -179,7 +185,9 @@ vb_parse_options(int           * argc,
             case 'c':
                 status = vb_parse_cpu_list(optarg, &(opts->cpu_array), &(opts->cpu_array_len));
                 if (status != VB_SUCCESS) {
-                    vb_error("Failed to parse CPU array\n");
+                    if (mpi_rank == 0)
+                        fprintf(stderr, "Failed to parse CPU array\n");
+
                     return VB_GENERIC_ERROR;
                 }
                 break;  
@@ -206,8 +214,12 @@ vb_parse_options(int           * argc,
     }
 
     if (!kernel_opt) {
-        vb_error_root("You must supply --kernel\n");
-        usage();
+        if (mpi_rank == 0) {
+            fprintf(stderr, "You must supply --kernel\n");
+            usage();
+        }
+
+        MPI_Finalize();
         exit(EXIT_FAILURE);
     }
 
@@ -222,28 +234,34 @@ main(int     argc,
      char ** argv,
      char ** envp)
 {
-    int status;
+    int status, mpi_inited, rank;
+
+    MPI_Initialized(&mpi_inited);
+    if (!mpi_inited) {
+        MPI_Init(&argc, &argv);
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    }
+
+    /* Parse cmd line options */
+    status = vb_parse_options(rank, &argc, &argv, &(this_instance.options));
+    if (status != VB_SUCCESS) {
+        vb_error_root("Could not parse command line options\n");
+        usage();
+        goto out_err;
+    }
 
     /* Get node/process topology */
     status = vb_build_rank_info(&argc, &argv, &this_instance);
     if (status != 0) {
         vb_error_root("Could not determine process topology\n");
-        exit(EXIT_FAILURE);
+        goto out_err;
     }
-
-    /* Parse cmd line options */
-    status = vb_parse_options(&argc, &argv, &(this_instance.options));
-    if (status != VB_SUCCESS) {
-        vb_error_root("Could not parse command line options\n");
-        usage();
-        exit(EXIT_FAILURE);
-    }
-
+ 
     /* Various initialization */
     status = vb_init_instance(&this_instance, false, argc, argv);
     if (status != VB_SUCCESS) {
         vb_error_root("Could not initialize instance\n");
-        exit(EXIT_FAILURE);
+        goto out_err;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -253,7 +271,12 @@ main(int     argc,
 
     vb_deinit_instance(&this_instance, 0 /* status */);
     vb_deinit_rank_info(&this_instance);
-    MPI_Finalize();
 
+out:
+    MPI_Finalize();
     exit(status);
+
+out_err:
+    status = EXIT_FAILURE;
+    goto out;
 }

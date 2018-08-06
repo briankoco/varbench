@@ -104,6 +104,7 @@ vb_delete_local_node_map(struct list_head * node_map)
 
 static int
 vb_build_system_topology(vb_rank_info_t   * info,
+                         vb_options_t     * options,
                          char               hostname[HOST_NAME_MAX],
                          struct list_head * node_map,
                          unsigned int     * node_id_list)
@@ -151,6 +152,7 @@ vb_build_system_topology(vb_rank_info_t   * info,
                  * node_id + 1, as 0 cannot be a successful return
                  * value
                  */
+
                 status = vb_htable_insert(hostname_table, (uintptr_t)cur_hostname, (uintptr_t)++info->num_nodes);
                 if (status == 0) {
                     vb_error("Could not update hashtable\n");
@@ -551,11 +553,6 @@ vb_build_rank_info(int           * argc,
 
     vb_rank_info_t * info = &(instance->rank_info);
     unsigned int * node_id_list = NULL;
-
-    /* MPI initialization */
-    if (!instance->as_library) {
-        MPI_Init(argc, argv);
-    }
 
     MPI_Comm_rank(MPI_COMM_WORLD, &(info->global_id));
     MPI_Comm_size(MPI_COMM_WORLD, &(info->num_instances));

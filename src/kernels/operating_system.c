@@ -34,6 +34,7 @@
 #define VB_OS_RESTART       1024
 #define TEST_ITERATION_CNT  1
 #define PROGRAM_WAIT_TIME   2
+#define FLUSH_GRANULARITY   (1ULL << 20)
 
 //#define VB_NO_CHECK
 
@@ -62,6 +63,7 @@ typedef struct {
 typedef struct {
     vb_program_list_t * program_list;
     char * toplevel_working_dir;
+    char * syscall_data_dir;
     char * json_file;
 
     char active_working_dir[MAX_NAME_LEN];
@@ -73,13 +75,24 @@ typedef struct {
 
     bool generate_program_csv;
     char program_filename[MAX_NAME_LEN];
+    int    program_fd;
     FILE * program_file;
+    unsigned long program_last_flush;
+    unsigned long program_bytes_written;
 
     bool generate_syscall_csv;
     char syscall_filename[MAX_NAME_LEN];
+    int    syscall_fd;
     FILE * syscall_file;
+    unsigned long syscall_last_flush;
+    unsigned long syscall_bytes_written;
 
     vb_syscall_info_t * syscall_arr;
+    MPI_Datatype syscall_dt;
+
+    /* Global root only */
+    int * global_program_indices;
+    vb_syscall_info_t * global_arr;
 } vb_os_info_t;
 
 
@@ -207,23 +220,32 @@ init_syscall_info_file(vb_instance_t * instance,
 {
     int status;
 
-    if (os_info->syscall_file) {
-        fclose(os_info->syscall_file);
-    }
+    if (os_info->syscall_fd)
+        close(os_info->syscall_fd);
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
     snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/%s", 
-        os_info->toplevel_working_dir, instance->fmt_str);
+        os_info->syscall_data_dir, instance->fmt_str);
     strncat(os_info->syscall_filename, "-syscalls.csv", 16);
 
-    os_info->syscall_file = fopen(os_info->syscall_filename, "w");
-    if (os_info->syscall_file == NULL) {
+    /* we need to use open() directly to disable page cache */
+    os_info->syscall_fd = open(os_info->syscall_filename, O_CREAT | O_TRUNC | O_RDWR, 0664);
+    if (os_info->syscall_fd == -1) {
         vb_error_root("Could not create csv file %s\n", os_info->syscall_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    os_info->syscall_file = fdopen(os_info->syscall_fd, "w");
+    if (os_info->syscall_file == NULL) {
+        vb_error_root("Could not get FD to csv file %s\n", os_info->syscall_filename);
         return VB_GENERIC_ERROR;
     }
 
     fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,nsecs\n");
     fflush(os_info->syscall_file);
+
+    os_info->syscall_last_flush = 0;
+    os_info->syscall_bytes_written = 0;
 
     return VB_SUCCESS;
 }
@@ -234,23 +256,32 @@ init_program_info_file(vb_instance_t * instance,
 {
     int status;
 
-    if (os_info->program_file) {
-        fclose(os_info->program_file);
-    }
+    if (os_info->program_fd)
+        close(os_info->program_fd);
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
     snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/%s", 
-        os_info->toplevel_working_dir, instance->fmt_str);
+        os_info->syscall_data_dir, instance->fmt_str);
     strncat(os_info->program_filename, "-programs.csv", 16);
 
-    os_info->program_file = fopen(os_info->program_filename, "w");
-    if (os_info->program_file == NULL) {
+    /* we need to use open() directly to disable page cache */
+    os_info->program_fd = open(os_info->program_filename, O_CREAT | O_TRUNC | O_RDWR, 0664);
+    if (os_info->program_fd < 0) {
         vb_error_root("Could not create csv file %s\n", os_info->program_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    os_info->program_file = fdopen(os_info->program_fd, "w");
+    if (os_info->program_file == NULL) {
+        vb_error_root("Could not get FD to csv file %s\n", os_info->program_filename);
         return VB_GENERIC_ERROR;
     }
 
     fprintf(os_info->program_file, "rank,iteration,program_id,nsecs\n");
     fflush(os_info->program_file);
+
+    os_info->program_last_flush = 0;
+    os_info->program_bytes_written = 0;
 
     return VB_SUCCESS;
 }
@@ -529,7 +560,7 @@ iteration(vb_instance_t      * instance,
 
 out:
     /* Reap possible grandchildren that could have been created during this set
-     * of programs We do this once per every program set, to prevent PID
+     * of programs. We do this once per every program set, to prevent PID
      * exhaustion over the course of many iterations.
      */
     kill_all_descendants(getpid());
@@ -547,63 +578,8 @@ gather_syscall_info(vb_instance_t     * instance,
     vb_rank_info_t * rank_info = &(instance->rank_info);
     unsigned int id            = rank_info->global_id;
     unsigned int num_instances = rank_info->num_instances;
-    vb_syscall_info_t * global_arr  = NULL;
-    int * global_program_indices = NULL;
     int program_off;
-
-    MPI_Datatype syscall_dt;
-
-    if (id == 0) {
-        global_program_indices = malloc(sizeof(int) * num_instances);
-        if (!global_program_indices) {
-            vb_error_root("Out of memory\n");
-            return VB_GENERIC_ERROR;
-        }
-
-        global_arr = malloc(sizeof(vb_syscall_info_t) * MAX_SYSCALLS * num_instances);
-        if (!global_arr) {
-            vb_error_root("Out of memory\n");
-            free(global_program_indices);
-            return VB_GENERIC_ERROR;
-        }
-    }
-
-    /* Definte MPI datatype for syscall info */
-    {
-        int ret, type_size;
-        int count = 4;
-        int array_of_blocklengths[] = {
-            1,
-            1,
-            1,
-            1
-        };
-        MPI_Aint array_of_displacements[] = {
-            offsetof(vb_syscall_info_t, syscall_number), 
-            offsetof(vb_syscall_info_t, ret_val), 
-            offsetof(vb_syscall_info_t, time_in),
-            offsetof(vb_syscall_info_t, time_out),
-        };
-        MPI_Datatype array_of_types[] = {
-            MPI_SHORT,
-            MPI_LONG_LONG_INT,
-            MPI_UNSIGNED_LONG_LONG,
-            MPI_UNSIGNED_LONG_LONG
-        };
-
-        /* Assert that the size of a pointer is size of MPI_LONG_LONG - otherwise this will fail spectacularly */
-        MPI_Type_size(MPI_LONG_LONG_INT, &type_size);
-        assert(type_size == sizeof(intptr_t));
-
-        MPI_Type_create_struct(
-            count,
-            array_of_blocklengths,
-            array_of_displacements,
-            array_of_types,
-            &syscall_dt
-        );
-        MPI_Type_commit(&syscall_dt);
-    }
+    int bytes_written;
 
     /* Gather syscall data for one program at a time, so as to limit the size
      * of the array we need to allocate at root
@@ -616,7 +592,7 @@ gather_syscall_info(vb_instance_t     * instance,
             &(program_indices[program_off]),
             1,
             MPI_INT,
-            global_program_indices,
+            os_info->global_program_indices,
             1,
             MPI_INT,
             0,
@@ -627,10 +603,10 @@ gather_syscall_info(vb_instance_t     * instance,
         MPI_Gather(
             send_buf,
             MAX_SYSCALLS, 
-            syscall_dt, 
-            global_arr, 
+            os_info->syscall_dt, 
+            os_info->global_arr, 
             MAX_SYSCALLS,
-            syscall_dt, 
+            os_info->syscall_dt, 
             0, 
             MPI_COMM_WORLD
         );
@@ -647,7 +623,7 @@ gather_syscall_info(vb_instance_t     * instance,
                 rank_time  = 0;
 
                 for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
-                    vb_syscall_info_t * syscall = &(global_arr[rid * MAX_SYSCALLS + syscall_off]);
+                    vb_syscall_info_t * syscall = &(os_info->global_arr[rid * MAX_SYSCALLS + syscall_off]);
                     unsigned long long  latency = syscall->time_out - syscall->time_in;
 
                     if (syscall->syscall_number != NO_SYSCALL) {
@@ -659,16 +635,41 @@ gather_syscall_info(vb_instance_t     * instance,
                             /* CSV format:
                              *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,time_in,nsecs
                              */
-                            fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
+                            bytes_written = fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
                                 rid,
                                 iteration,
-                                os_info->program_list->program_list[global_program_indices[rid]].name,
+                                os_info->program_list->program_list[os_info->global_program_indices[rid]].name,
                                 syscall_nr++,
                                 syscall->syscall_number,
                                 syscall->ret_val,
                                 syscall->time_in,
                                 latency
                             );
+
+                            /* to prevent us from blowing up the page cache, and potentially competing with 
+                             * the workloads we're running, tell the kernel to ignore the file contents every
+                             * couple MB or so that we write */
+                            os_info->syscall_bytes_written += bytes_written;
+                            if (os_info->syscall_bytes_written >
+                                (os_info->syscall_last_flush + FLUSH_GRANULARITY))
+                            {
+                                fflush(os_info->syscall_file);
+                                assert(sync_file_range(
+                                    os_info->syscall_fd,
+                                    os_info->syscall_last_flush,
+                                    FLUSH_GRANULARITY,
+                                    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE
+                                ) == 0);
+
+                                assert(posix_fadvise(
+                                    os_info->syscall_fd,
+                                    os_info->syscall_last_flush,
+                                    FLUSH_GRANULARITY,
+                                    POSIX_FADV_DONTNEED
+                                ) == 0);
+
+                                os_info->syscall_last_flush += FLUSH_GRANULARITY;
+                            }
                         }
                     }
                 }
@@ -677,28 +678,43 @@ gather_syscall_info(vb_instance_t     * instance,
                     /* CSV format:
                      *  rank_id,iteration,program_id,nsecs
                      */
-                     fprintf(os_info->program_file, "%d,%llu,%s,%llu\n",
+                     bytes_written = fprintf(os_info->program_file, "%d,%llu,%s,%llu\n",
                         rid,
                         iteration,
-                        os_info->program_list->program_list[global_program_indices[rid]].name,
+                        os_info->program_list->program_list[os_info->global_program_indices[rid]].name,
                         rank_time
                     );
+
+                    /* to prevent us from blowing up the page cache, and potentially competing with 
+                     * the workloads we're running, tell the kernel to ignore the file contents every
+                     * couple MB or so that we write */
+                    os_info->program_bytes_written += bytes_written;
+                    if (os_info->program_bytes_written >
+                        (os_info->program_last_flush + FLUSH_GRANULARITY))
+                    {
+                        fflush(os_info->program_file);
+                        assert(sync_file_range(
+                            os_info->program_fd,
+                            os_info->program_last_flush,
+                            FLUSH_GRANULARITY,
+                            SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WAIT_AFTER | SYNC_FILE_RANGE_WRITE
+                        ) == 0);
+
+                        assert(posix_fadvise(
+                            os_info->program_fd,
+                            os_info->program_last_flush,
+                            FLUSH_GRANULARITY,
+                            POSIX_FADV_DONTNEED
+                        ) == 0);
+
+
+                        os_info->program_last_flush += FLUSH_GRANULARITY;
+                    }
                 }
             }
         }
     }
 
-    if (id == 0) {
-        if (os_info->generate_syscall_csv) 
-            fflush(os_info->syscall_file);
-
-        if (os_info->generate_program_csv)
-            fflush(os_info->program_file);
-
-        free(global_arr);
-        free(global_program_indices);
-    }
-   
     return VB_SUCCESS;
 }
 
@@ -1168,7 +1184,72 @@ save_program_info(vb_instance_t * instance,
         free(vals);
     }
 }
-    
+
+static int
+__prepare_root_aggregation(vb_instance_t * instance,
+                           vb_os_info_t  * os_info)
+{
+    int num_instances;
+    int global_id;
+
+    num_instances = instance->rank_info.num_instances;
+    global_id     = instance->rank_info.global_id;
+
+    /* All ranks create a new MPI datatype */
+    {
+        int ret, type_size;
+        int count = 4;
+        int array_of_blocklengths[] = {
+            1,
+            1,
+            1,
+            1
+        };
+        MPI_Aint array_of_displacements[] = {
+            offsetof(vb_syscall_info_t, syscall_number), 
+            offsetof(vb_syscall_info_t, ret_val), 
+            offsetof(vb_syscall_info_t, time_in),
+            offsetof(vb_syscall_info_t, time_out),
+        };
+        MPI_Datatype array_of_types[] = {
+            MPI_SHORT,
+            MPI_LONG_LONG_INT,
+            MPI_UNSIGNED_LONG_LONG,
+            MPI_UNSIGNED_LONG_LONG
+        };
+
+        /* Assert that the size of a pointer is size of MPI_LONG_LONG - otherwise this will fail spectacularly */
+        MPI_Type_size(MPI_LONG_LONG_INT, &type_size);
+        assert(type_size == sizeof(intptr_t));
+
+        MPI_Type_create_struct(
+            count,
+            array_of_blocklengths,
+            array_of_displacements,
+            array_of_types,
+            &(os_info->syscall_dt)
+        );
+        MPI_Type_commit(&(os_info->syscall_dt));
+    }
+
+    /* Global root prepares array */
+    if (global_id == 0) {
+        os_info->global_program_indices = malloc(sizeof(int) * num_instances);
+        if (!os_info->global_program_indices) {
+            vb_error_root("Out of memory\n");
+            return VB_GENERIC_ERROR;
+        }
+
+        os_info->global_arr = malloc(sizeof(vb_syscall_info_t) * MAX_SYSCALLS * num_instances);
+        if (!os_info->global_arr) {
+            vb_error_root("Out of memory\n");
+            free(os_info->global_program_indices);
+            return VB_GENERIC_ERROR;
+        }
+    }
+
+    return VB_SUCCESS;
+}
 
 static int
 run_kernel(vb_instance_t    * instance,
@@ -1276,9 +1357,23 @@ run_kernel(vb_instance_t    * instance,
             vb_error_root("Unable to derive set of successful programs\n");
             goto out_prog_list;
         } 
+
+        /* Prepare the root process for system call data aggregation */
+        if (os_info->generate_syscall_csv || os_info->generate_program_csv) {
+            status = __prepare_root_aggregation(instance, os_info);
+            if (status != VB_SUCCESS) {
+                vb_error_root("Unable to prepare for system call data aggregation\n");
+                goto out_aggregate;
+            }
+        }
         
         /* Run the kernel */
         status = __run_kernel(instance, os_info, iterations, program_indices);
+
+        if (instance->rank_info.global_id == 0) {
+            free(os_info->global_arr);
+            free(os_info->global_program_indices);
+        }
             
         /* Store the program list in the XML */
         if ((status == VB_SUCCESS) && (instance->rank_info.global_id == 0)) {
@@ -1288,6 +1383,7 @@ run_kernel(vb_instance_t    * instance,
         free(program_indices);
     } while (status == VB_OS_RESTART);
 
+out_aggregate:
 out_prog_list:
 out_csv:
     free(os_info->program_list->program_list);
@@ -1364,7 +1460,8 @@ usage(void)
         "  arg 3: <number of programs per iteration>\n"
         "  arg 4: <generate program csv> (0/1)\n"
         "  arg 5: <generate syscall csv> (0/1)\n"
-        "  arg 6: <seed for random program selection order> (optional: default = time(NULL))\n"
+        "  arg 6: <directory to store program/syscall data>\n"
+        "  arg 7: <seed for random program selection order> (optional: default = time(NULL))\n"
         );
 }
 
@@ -1374,9 +1471,9 @@ vb_kernel_operating_system(int             argc,
                            char         ** argv,
                            vb_instance_t * instance)
 {
-    char * json_file, * program_id;
+    char * json_file, * program_id, * data_dir;
     char selection_mode, concurrency_mode, execution_mode;
-    bool program_csv, syscall_csv;
+    bool do_program_csv, do_syscall_csv;
     int nr_programs_per_iter, selection_seed;
     int status;
     vb_os_info_t * os_info;
@@ -1391,11 +1488,12 @@ vb_kernel_operating_system(int             argc,
     execution_mode       = argv[2][0];
     nr_programs_per_iter = atoi(argv[3]);
 
-    program_csv = (atoi(argv[4]) == 1) ? true : false;
-    syscall_csv = (atoi(argv[5]) == 1) ? true : false;
+    do_program_csv = (atoi(argv[4]) == 1) ? true : false;
+    do_syscall_csv = (atoi(argv[5]) == 1) ? true : false;
+    data_dir = argv[6];
 
-    if (argc == 7) 
-        selection_seed = atoi(argv[6]);
+    if (argc == 8) 
+        selection_seed = atoi(argv[7]);
     else
         selection_seed = time(NULL);
 
@@ -1436,8 +1534,8 @@ vb_kernel_operating_system(int             argc,
     os_info->nr_programs_per_iteration = nr_programs_per_iter;
     os_info->selection_seed = selection_seed;
 
-    os_info->generate_program_csv = program_csv;
-    os_info->generate_syscall_csv = syscall_csv;
+    os_info->generate_program_csv = do_program_csv;
+    os_info->generate_syscall_csv = do_syscall_csv;
 
     os_info->toplevel_working_dir = get_current_dir_name();
     if (os_info->toplevel_working_dir == NULL) {
@@ -1452,6 +1550,28 @@ vb_kernel_operating_system(int             argc,
         vb_error("Could not determine full path of json file %s\n", json_file);
         free(os_info);
         return VB_GENERIC_ERROR;
+    }
+
+    /* Make sure we can create files in the data dir */
+    os_info->syscall_data_dir = data_dir;
+    if ((do_program_csv || do_syscall_csv) && 
+        (instance->rank_info.global_id == 0)) 
+    {
+        int tmp_fd;
+        char * tmp_file;
+
+        asprintf(&tmp_file, "%s/test.txt", os_info->syscall_data_dir);
+        tmp_fd = open(tmp_file, O_CREAT | O_TRUNC | O_DIRECT | O_RDWR | O_LARGEFILE);
+
+        if (tmp_fd < 0) {
+            vb_error_root("Error: could not create a file in %s: %s\n", os_info->syscall_data_dir, strerror(errno));
+            free(tmp_file);
+            return VB_BAD_ARGS;
+        }
+
+        unlink(tmp_file);
+        free(tmp_file);
+        close(tmp_fd);
     }
 
     /* generate private working dir */
@@ -1470,15 +1590,17 @@ vb_kernel_operating_system(int             argc,
         "  Programs per iter : %d\n"
         "  Selection seed    : %d\n"
         "  Per-program CSV   : %s\n"
-        "  Per-syscall CSV   : %s\n",
+        "  Per-syscall CSV   : %s\n"
+        "  Data collected in : %s\n",
         instance->options.num_iterations,
         os_info->json_file,
         (concurrency_mode == 's') ? "single"   : "random",
         (  execution_mode == 'd') ? "direct"   : "fork",
         nr_programs_per_iter,
         selection_seed,
-        (program_csv) ? "Y" : "N",
-        (syscall_csv) ? "Y" : "N"
+        (do_program_csv) ? "Y" : "N",
+        (do_syscall_csv) ? "Y" : "N",
+        (do_program_csv || do_syscall_csv) ? data_dir : "<disabled>"
     );
 
     status = run_kernel(instance, os_info, instance->options.num_iterations);
