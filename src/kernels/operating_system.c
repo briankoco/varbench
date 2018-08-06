@@ -658,7 +658,7 @@ gather_syscall_info(vb_instance_t     * instance,
                                     os_info->syscall_fd,
                                     os_info->syscall_last_flush,
                                     FLUSH_GRANULARITY,
-                                    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE
+                                    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WAIT_AFTER | SYNC_FILE_RANGE_WRITE
                                 ) == 0);
 
                                 assert(posix_fadvise(
@@ -706,7 +706,6 @@ gather_syscall_info(vb_instance_t     * instance,
                             FLUSH_GRANULARITY,
                             POSIX_FADV_DONTNEED
                         ) == 0);
-
 
                         os_info->program_last_flush += FLUSH_GRANULARITY;
                     }
