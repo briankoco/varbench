@@ -574,7 +574,7 @@ vb_build_rank_info(int           * argc,
         }
     }
 
-    status = vb_build_system_topology(info, hostname, &node_map, node_id_list);
+    status = vb_build_system_topology(info, &(instance->options), hostname, &node_map, node_id_list);
     if (status != VB_SUCCESS) {
         vb_error("Could not build local node map\n");
         goto out_build_local;
@@ -600,7 +600,7 @@ vb_build_rank_info(int           * argc,
         );
     }
 
-    /* (3) Build a couple more communicators: one to communicate among all
+    /* (3) Build a couple new communicators: one to communicate among all
      * local root instances, and one to communicate amoung all local node
      * instances
      */
