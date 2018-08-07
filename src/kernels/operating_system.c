@@ -1477,7 +1477,7 @@ vb_kernel_operating_system(int             argc,
     int status;
     vb_os_info_t * os_info;
 
-    if (argc != 6 && argc != 7) {
+    if (argc != 7 && argc != 8) {
         usage();
         return VB_BAD_ARGS;
     }
