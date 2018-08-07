@@ -581,6 +581,14 @@ gather_syscall_info(vb_instance_t     * instance,
     int program_off;
     int bytes_written;
 
+    /*DEBUG: TIMING THIS FUNCTION!*/
+    time_t start_t, end_t;
+    double diff_t;
+    time(&start_t);
+    /*END DEBUG*/
+    
+    
+
     /* Gather syscall data for one program at a time, so as to limit the size
      * of the array we need to allocate at root
      */
@@ -713,6 +721,12 @@ gather_syscall_info(vb_instance_t     * instance,
             }
         }
     }
+    
+    /*DEBUG: TIMING THIS FUNCTION!*/
+    time(&end_t);
+    diff_t = difftime(end_t, start_t);
+    printf("Iteration: %llu CSV WRITE TIME: %f s\n", iteration, diff_t);
+    /*END DEBUG*/
 
     return VB_SUCCESS;
 }
