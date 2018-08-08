@@ -735,11 +735,12 @@ gather_syscall_info(vb_instance_t     * instance,
     unsigned int num_instances = rank_info->num_instances;
     int program_off;
     int bytes_written;
+    int rid = id;
 
 
    /*init non-root syscall/program files*/
    if (id != 0 && iteration == 0 && os_info->generate_syscall_csv){
-   	status = init_syscall_info_file(instance, os_info);
+   	int status = init_syscall_info_file(instance, os_info);
                 if (status != VB_SUCCESS) {
                     vb_error_root("Could not initialize syscall CSV\n");
 		    return VB_GENERIC_ERROR; 
@@ -747,7 +748,7 @@ gather_syscall_info(vb_instance_t     * instance,
  
    }
    if (id != 0 && iteration == 0 && os_info->generate_program_csv){
-   	status = init_program_info_file(instance, os_info);
+   	int status = init_program_info_file(instance, os_info);
                 if (status != VB_SUCCESS) {
                     vb_error_root("Could not initialize program CSV\n");
                     return VB_GENERIC_ERROR; 
@@ -778,7 +779,7 @@ gather_syscall_info(vb_instance_t     * instance,
                             /* CSV format:
                              *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,time_in,nsecs
                              */
-                            bytes_written = fprintf(outfile, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
+                            bytes_written = fprintf(os_info->syscall_file, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
                                 rid,
                                 iteration,
                                 os_info->program_list->program_list[program_idx].name,
