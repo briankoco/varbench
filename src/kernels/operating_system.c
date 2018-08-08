@@ -224,8 +224,8 @@ init_syscall_info_file(vb_instance_t * instance,
         close(os_info->syscall_fd);
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/%s", 
-        os_info->syscall_data_dir, instance->fmt_str);
+    snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/rank-%d-%s", 
+        os_info->syscall_data_dir, instance->rank_info.global_id, instance->fmt_str);
     strncat(os_info->syscall_filename, "-syscalls.csv", 16);
 
     /* we need to use open() directly to disable page cache */
@@ -260,8 +260,8 @@ init_program_info_file(vb_instance_t * instance,
         close(os_info->program_fd);
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/%s", 
-        os_info->syscall_data_dir, instance->fmt_str);
+    snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/rank-%d-%s", 
+        os_info->syscall_data_dir, instance->rank_info.global_id, instance->fmt_str);
     strncat(os_info->program_filename, "-programs.csv", 16);
 
     /* we need to use open() directly to disable page cache */
@@ -569,6 +569,11 @@ out:
     return global_status;
 }                     
 
+
+#define USE_MPI_GATHER 0
+
+#if USE_MPI_GATHER == 1
+
 static int
 gather_syscall_info(vb_instance_t     * instance,
                     vb_os_info_t      * os_info,
@@ -580,14 +585,6 @@ gather_syscall_info(vb_instance_t     * instance,
     unsigned int num_instances = rank_info->num_instances;
     int program_off;
     int bytes_written;
-
-    /*DEBUG: TIMING THIS FUNCTION!*/
-    time_t start_t, end_t;
-    double diff_t;
-    time(&start_t);
-    /*END DEBUG*/
-    
-    
 
     /* Gather syscall data for one program at a time, so as to limit the size
      * of the array we need to allocate at root
@@ -721,15 +718,148 @@ gather_syscall_info(vb_instance_t     * instance,
             }
         }
     }
-    
-    /*DEBUG: TIMING THIS FUNCTION!*/
-    time(&end_t);
-    diff_t = difftime(end_t, start_t);
-    printf("Iteration: %llu CSV WRITE TIME: %f s\n", iteration, diff_t);
-    /*END DEBUG*/
 
     return VB_SUCCESS;
 }
+
+#else
+
+static int
+gather_syscall_info(vb_instance_t     * instance,
+                    vb_os_info_t      * os_info,
+                    int               * program_indices,
+                    unsigned long long  iteration)
+{
+    vb_rank_info_t * rank_info = &(instance->rank_info);
+    unsigned int id            = rank_info->global_id;
+    unsigned int num_instances = rank_info->num_instances;
+    int program_off;
+    int bytes_written;
+
+
+   /*init non-root syscall/program files*/
+   if (id != 0 && iteration == 0 && os_info->generate_syscall_csv){
+   	status = init_syscall_info_file(instance, os_info);
+                if (status != VB_SUCCESS) {
+                    vb_error_root("Could not initialize syscall CSV\n");
+		    return VB_GENERIC_ERROR; 
+                }
+ 
+   }
+   if (id != 0 && iteration == 0 && os_info->generate_program_csv){
+   	status = init_program_info_file(instance, os_info);
+                if (status != VB_SUCCESS) {
+                    vb_error_root("Could not initialize program CSV\n");
+                    return VB_GENERIC_ERROR; 
+                } 
+   }
+
+    for (program_off = 0; program_off < os_info->nr_programs_per_iteration; program_off++) {
+        vb_syscall_info_t * syscall_arr = &(os_info->syscall_arr[program_off * MAX_SYSCALLS]);
+	int program_idx = program_indices[program_off];
+
+            unsigned int syscall_off;
+            unsigned int syscall_nr;
+            unsigned long long rank_time;
+
+                syscall_nr = 0;
+                rank_time  = 0;
+
+                for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
+                    vb_syscall_info_t * syscall = &(syscall_arr[syscall_off]);
+                    unsigned long long  latency = syscall->time_out - syscall->time_in;
+
+                    if (syscall->syscall_number != NO_SYSCALL) {
+                        if (os_info->generate_program_csv) {
+                            rank_time += latency;
+                        }
+
+                        if (os_info->generate_syscall_csv) {
+                            /* CSV format:
+                             *  rank_id,iteration,program_id,syscall_off_in_program,syscall_number,ret_val,time_in,nsecs
+                             */
+                            bytes_written = fprintf(outfile, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
+                                rid,
+                                iteration,
+                                os_info->program_list->program_list[program_idx].name,
+                                syscall_nr++,
+                                syscall->syscall_number,
+                                syscall->ret_val,
+                                syscall->time_in,
+                                latency
+                            );
+
+                            /* to prevent us from blowing up the page cache, and potentially competing with 
+                             * the workloads we're running, tell the kernel to ignore the file contents every
+                             * couple MB or so that we write */
+                            os_info->syscall_bytes_written += bytes_written;
+                            if (os_info->syscall_bytes_written >
+                                (os_info->syscall_last_flush + FLUSH_GRANULARITY))
+                            {
+                                fflush(os_info->syscall_file);
+                                assert(sync_file_range(
+                                    os_info->syscall_fd,
+                                    os_info->syscall_last_flush,
+                                    FLUSH_GRANULARITY,
+                                    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WAIT_AFTER | SYNC_FILE_RANGE_WRITE
+                                ) == 0);
+
+                                assert(posix_fadvise(
+                                    os_info->syscall_fd,
+                                    os_info->syscall_last_flush,
+                                    FLUSH_GRANULARITY,
+                                    POSIX_FADV_DONTNEED
+                                ) == 0);
+
+                                os_info->syscall_last_flush += FLUSH_GRANULARITY;
+                            }
+                        }
+                    }
+                }
+
+                if (os_info->generate_program_csv) {
+                    /* CSV format:
+                     *  rank_id,iteration,program_id,nsecs
+                     */
+                     bytes_written = fprintf(os_info->program_file, "%d,%llu,%s,%llu\n",
+                        rid,
+                        iteration,
+                        os_info->program_list->program_list[program_idx].name,
+                        rank_time
+                    );
+
+                    /* to prevent us from blowing up the page cache, and potentially competing with 
+                     * the workloads we're running, tell the kernel to ignore the file contents every
+                     * couple MB or so that we write */
+                    os_info->program_bytes_written += bytes_written;
+                    if (os_info->program_bytes_written >
+                        (os_info->program_last_flush + FLUSH_GRANULARITY))
+                    {
+                        fflush(os_info->program_file);
+                        assert(sync_file_range(
+                            os_info->program_fd,
+                            os_info->program_last_flush,
+                            FLUSH_GRANULARITY,
+                            SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WAIT_AFTER | SYNC_FILE_RANGE_WRITE
+                        ) == 0);
+
+                        assert(posix_fadvise(
+                            os_info->program_fd,
+                            os_info->program_last_flush,
+                            FLUSH_GRANULARITY,
+                            POSIX_FADV_DONTNEED
+                        ) == 0);
+
+                        os_info->program_last_flush += FLUSH_GRANULARITY;
+                    }
+                }
+            
+    }
+
+    return VB_SUCCESS;
+}
+
+#endif
 
 static int
 __run_kernel(vb_instance_t     * instance,
