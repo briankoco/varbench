@@ -737,24 +737,30 @@ gather_syscall_info(vb_instance_t     * instance,
     int bytes_written;
     int rid = id;
 
-
-   /*init non-root syscall/program files*/
-   if (id != 0 && iteration == 0 && os_info->generate_syscall_csv){
-   	int status = init_syscall_info_file(instance, os_info);
-                if (status != VB_SUCCESS) {
-                    vb_error_root("Could not initialize syscall CSV\n");
-		    return VB_GENERIC_ERROR; 
-                }
- 
+   int rank;
+  if(iteration == 0){
+   for (rank = 1; rank < 64; rank++){
+	if (rank == id){
+		   /*init non-root syscall/program files*/
+		   if (os_info->generate_syscall_csv){
+   			int status = init_syscall_info_file(instance, os_info);
+        		    if (status != VB_SUCCESS) {
+                		vb_error_root("Could not initialize syscall CSV\n");
+		                return VB_GENERIC_ERROR; 
+ 		         }
+ 	
+		   }
+		   if (os_info->generate_program_csv){
+   			int status = init_program_info_file(instance, os_info);
+            		    if (status != VB_SUCCESS) {
+            		        vb_error_root("Could not initialize program CSV\n");
+                    	        return VB_GENERIC_ERROR; 
+               		 } 
+   		}
+   	}
+	MPI_Barrier(MPI_COMM_WORLD);
    }
-   if (id != 0 && iteration == 0 && os_info->generate_program_csv){
-   	int status = init_program_info_file(instance, os_info);
-                if (status != VB_SUCCESS) {
-                    vb_error_root("Could not initialize program CSV\n");
-                    return VB_GENERIC_ERROR; 
-                } 
-   }
-
+}
     for (program_off = 0; program_off < os_info->nr_programs_per_iteration; program_off++) {
         vb_syscall_info_t * syscall_arr = &(os_info->syscall_arr[program_off * MAX_SYSCALLS]);
 	int program_idx = program_indices[program_off];
