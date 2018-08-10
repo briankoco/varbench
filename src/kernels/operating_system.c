@@ -36,6 +36,8 @@
 #define PROGRAM_WAIT_TIME   2
 #define FLUSH_GRANULARITY   (1ULL << 20)
 
+#define USE_MPI_GATHER 0
+
 //#define VB_NO_CHECK
 
 typedef int (*syzkaller_prototype_t)(vb_syscall_info_t * scall_info, int * num_calls);
@@ -214,6 +216,8 @@ free_shared_mapping(vb_syscall_info_t * syscall_arr,
     munmap(syscall_arr, bytes);
 }
 
+#if USE_MPI_GATHER == 1
+
 static int
 init_syscall_info_file(vb_instance_t * instance,
                        vb_os_info_t  * os_info)
@@ -224,8 +228,8 @@ init_syscall_info_file(vb_instance_t * instance,
         close(os_info->syscall_fd);
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/rank-%d-%s", 
-        os_info->syscall_data_dir, instance->rank_info.global_id, instance->fmt_str);
+    snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/%s", 
+        os_info->syscall_data_dir, instance->fmt_str);
     strncat(os_info->syscall_filename, "-syscalls.csv", 16);
 
     /* we need to use open() directly to disable page cache */
@@ -260,8 +264,8 @@ init_program_info_file(vb_instance_t * instance,
         close(os_info->program_fd);
 
     /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
-    snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/rank-%d-%s", 
-        os_info->syscall_data_dir, instance->rank_info.global_id, instance->fmt_str);
+    snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/%s", 
+        os_info->syscall_data_dir, instance->fmt_str);
     strncat(os_info->program_filename, "-programs.csv", 16);
 
     /* we need to use open() directly to disable page cache */
@@ -285,6 +289,82 @@ init_program_info_file(vb_instance_t * instance,
 
     return VB_SUCCESS;
 }
+
+#else
+
+static int
+init_syscall_info_file(vb_instance_t * instance,
+                       vb_os_info_t  * os_info)
+{
+    int status;
+
+    if (os_info->syscall_fd)
+        close(os_info->syscall_fd);
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(os_info->syscall_filename, MAX_NAME_LEN - 16, "%s/rank-%d", 
+        os_info->syscall_data_dir, instance->rank_info.global_id);
+    strncat(os_info->syscall_filename, "-syscalls.csv", 16);
+
+    /* we need to use open() directly to disable page cache */
+    os_info->syscall_fd = open(os_info->syscall_filename, O_CREAT | O_TRUNC | O_RDWR, 0664);
+    if (os_info->syscall_fd == -1) {
+        vb_error_root("Could not create csv file %s\n", os_info->syscall_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    os_info->syscall_file = fdopen(os_info->syscall_fd, "w");
+    if (os_info->syscall_file == NULL) {
+        vb_error_root("Could not get FD to csv file %s\n", os_info->syscall_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(os_info->syscall_file, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,nsecs\n");
+    fflush(os_info->syscall_file);
+
+    os_info->syscall_last_flush = 0;
+    os_info->syscall_bytes_written = 0;
+
+    return VB_SUCCESS;
+}
+
+static int
+init_program_info_file(vb_instance_t * instance,
+                       vb_os_info_t  * os_info)
+{
+    int status;
+
+    if (os_info->program_fd)
+        close(os_info->program_fd);
+
+    /* instance->fmt_str hold the unique fmt_str for this run based on time of day */
+    snprintf(os_info->program_filename, MAX_NAME_LEN - 16, "%s/rank-%d", 
+        os_info->syscall_data_dir, instance->rank_info.global_id);
+    strncat(os_info->program_filename, "-programs.csv", 16);
+
+    /* we need to use open() directly to disable page cache */
+    os_info->program_fd = open(os_info->program_filename, O_CREAT | O_TRUNC | O_RDWR, 0664);
+    if (os_info->program_fd < 0) {
+        vb_error_root("Could not create csv file %s\n", os_info->program_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    os_info->program_file = fdopen(os_info->program_fd, "w");
+    if (os_info->program_file == NULL) {
+        vb_error_root("Could not get FD to csv file %s\n", os_info->program_filename);
+        return VB_GENERIC_ERROR;
+    }
+
+    fprintf(os_info->program_file, "rank,iteration,program_id,nsecs\n");
+    fflush(os_info->program_file);
+
+    os_info->program_last_flush = 0;
+    os_info->program_bytes_written = 0;
+
+    return VB_SUCCESS;
+}
+
+#endif
 
 static void
 call_fn(vb_instance_t       * instance,
@@ -570,7 +650,6 @@ out:
 }                     
 
 
-#define USE_MPI_GATHER 0
 
 #if USE_MPI_GATHER == 1
 
@@ -737,49 +816,25 @@ gather_syscall_info(vb_instance_t     * instance,
     int bytes_written;
     int rid = id;
 
-   int rank;
-  if(iteration == 0){
-   for (rank = 1; rank < 64; rank++){
-	if (rank == id){
-		   /*init non-root syscall/program files*/
-		   if (os_info->generate_syscall_csv){
-   			int status = init_syscall_info_file(instance, os_info);
-        		    if (status != VB_SUCCESS) {
-                		vb_error_root("Could not initialize syscall CSV\n");
-		                return VB_GENERIC_ERROR; 
- 		         }
- 	
-		   }
-		   if (os_info->generate_program_csv){
-   			int status = init_program_info_file(instance, os_info);
-            		    if (status != VB_SUCCESS) {
-            		        vb_error_root("Could not initialize program CSV\n");
-                    	        return VB_GENERIC_ERROR; 
-               		 } 
-   		}
-   	}
-	MPI_Barrier(MPI_COMM_WORLD);
-   }
-}
     for (program_off = 0; program_off < os_info->nr_programs_per_iteration; program_off++) {
         vb_syscall_info_t * syscall_arr = &(os_info->syscall_arr[program_off * MAX_SYSCALLS]);
-	int program_idx = program_indices[program_off];
+	    int program_idx = program_indices[program_off];
 
-            unsigned int syscall_off;
-            unsigned int syscall_nr;
-            unsigned long long rank_time;
+        unsigned int syscall_off;
+        unsigned int syscall_nr;
+        unsigned long long rank_time;
 
-                syscall_nr = 0;
-                rank_time  = 0;
+        syscall_nr = 0;
+        rank_time  = 0;
 
-                for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
-                    vb_syscall_info_t * syscall = &(syscall_arr[syscall_off]);
-                    unsigned long long  latency = syscall->time_out - syscall->time_in;
+        for (syscall_off = 0; syscall_off < MAX_SYSCALLS; syscall_off++) {
+            vb_syscall_info_t * syscall = &(syscall_arr[syscall_off]);
+            unsigned long long  latency = syscall->time_out - syscall->time_in;
 
-                    if (syscall->syscall_number != NO_SYSCALL) {
-                        if (os_info->generate_program_csv) {
-                            rank_time += latency;
-                        }
+            if (syscall->syscall_number != NO_SYSCALL) {
+                       if (os_info->generate_program_csv) {
+                           rank_time += latency;
+                       }
 
                         if (os_info->generate_syscall_csv) {
                             /* CSV format:
@@ -860,7 +915,6 @@ gather_syscall_info(vb_instance_t     * instance,
                         os_info->program_last_flush += FLUSH_GRANULARITY;
                     }
                 }
-            
     }
 
     return VB_SUCCESS;
@@ -1401,6 +1455,9 @@ __prepare_root_aggregation(vb_instance_t * instance,
     return VB_SUCCESS;
 }
 
+
+#if USE_MPI_GATHER == 1
+
 static int
 run_kernel(vb_instance_t    * instance,
            vb_os_info_t     * os_info,
@@ -1544,6 +1601,152 @@ out_json:
 
     return status;
 }
+
+#else
+
+static int
+run_kernel(vb_instance_t    * instance,
+           vb_os_info_t     * os_info,
+           unsigned long long iterations)
+{
+    int i, status, global_seed, nr_programs;
+    int * program_indices;
+    cJSON * json_obj, *program_dict, * true_list;
+    void * lib_handle;
+    struct sigaction act, old_act;
+    char saved_exec_mode;
+
+    /* Catch SIGALRM */
+    act.sa_handler = alrm;
+    act.sa_flags   = 0;
+    sigemptyset(&act.sa_mask);
+
+    status = sigaction(SIGALRM, &act, &old_act);
+    if (status != 0) {
+        vb_error("Could not install signal handler for SIGALRM: %s\n", strerror(errno));
+        return VB_GENERIC_ERROR;
+    }
+
+    /* Get a handle to the syzkaller program library */
+    lib_handle = dlopen(NULL, RTLD_NOW|RTLD_GLOBAL);
+    if (lib_handle == NULL) {
+        vb_error("dlopen failed\n");
+        return VB_GENERIC_ERROR;
+    }
+
+    /* Get JSON object describing programs */
+    status = get_json_object(instance, os_info->json_file, &json_obj);
+    if (status != VB_SUCCESS) {
+        vb_error("Unable to build JSON object\n");
+        return status;
+    }
+
+    program_dict = cJSON_GetObjectItemCaseSensitive(json_obj, "program_dict");
+    if (!cJSON_IsObject(program_dict)) {
+        vb_error("Unable to retrieve 'program_dict' object from JSON object\n");
+        goto out_json;
+    }
+
+    true_list = cJSON_GetObjectItemCaseSensitive(program_dict, "true");
+    if (!cJSON_IsArray(true_list)) {
+        vb_error("Unable to retrieve 'true' object from JSON object\n");
+        status = VB_GENERIC_ERROR;
+        goto out_json;
+    }
+
+    /* Build list of programs to execute */
+    status = build_vb_program_list(true_list, lib_handle, &(os_info->program_list));
+    if (status != VB_SUCCESS) {
+        vb_error("Unable to build program list\n");
+        goto out_json;
+    }
+
+
+    /* Do this until we get a successful program run */
+    do {
+        /* reinit syscall/program files */
+            if (os_info->generate_syscall_csv) {
+                status = init_syscall_info_file(instance, os_info);
+                if (status != VB_SUCCESS) {
+                    vb_error_root("Could not initialize syscall CSV\n");
+                    goto out_csv;
+                }
+            }
+
+            if (os_info->generate_program_csv) {
+                status = init_program_info_file(instance, os_info);
+                if (status != VB_SUCCESS) {
+                    vb_error_root("Could not initialize program CSV\n");
+                    goto out_csv;
+                }
+            }
+
+        /* Disable any failed programs */
+        status = disable_failed_programs(instance, os_info->program_list);
+        if (status != VB_SUCCESS) {
+            vb_error("Unable to disable failed programs\n");
+            goto out_prog_list;
+        }
+
+        /* To start, set everything to INITING, unless some programs are already disabled */
+        for (i = 0; i < os_info->program_list->nr_programs; i++) {
+            vb_program_t * program = &(os_info->program_list->program_list[i]);
+
+            if (program->status == VB_ENABLED)
+                program->status = VB_INITING;
+        }
+
+        /* Derive set of programs to execute
+         *   (first, disable 'direct' mode,
+         */
+        saved_exec_mode = os_info->execution_mode;
+        os_info->execution_mode = 'f';
+        status = derive_program_set(instance, os_info, &program_indices);
+        os_info->execution_mode = saved_exec_mode;
+
+        if (status != VB_SUCCESS) {
+            vb_error_root("Unable to derive set of successful programs\n");
+            goto out_prog_list;
+        } 
+
+        /* Prepare the root process for system call data aggregation */
+        if (os_info->generate_syscall_csv || os_info->generate_program_csv) {
+            status = __prepare_root_aggregation(instance, os_info);
+            if (status != VB_SUCCESS) {
+                vb_error_root("Unable to prepare for system call data aggregation\n");
+                goto out_aggregate;
+            }
+        }
+        
+        /* Run the kernel */
+        status = __run_kernel(instance, os_info, iterations, program_indices);
+
+        if (instance->rank_info.global_id == 0) {
+            free(os_info->global_arr);
+            free(os_info->global_program_indices);
+        }
+            
+        /* Store the program list in the XML */
+        if ((status == VB_SUCCESS) && (instance->rank_info.global_id == 0)) {
+            save_program_info(instance, os_info, program_indices);
+        }
+
+        free(program_indices);
+    } while (status == VB_OS_RESTART);
+
+out_aggregate:
+out_prog_list:
+out_csv:
+    free(os_info->program_list->program_list);
+    free(os_info->program_list);
+
+out_json:
+    cJSON_Delete(json_obj);
+
+    return status;
+}
+
+#endif
 
 /* 
  * glibc does not provide a function to remove non-empty
