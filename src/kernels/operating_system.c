@@ -771,7 +771,7 @@ gather_syscall_info(vb_instance_t     * instance,
                     bytes_written = fprintf(os_info->syscall_fp, "%d,%llu,%s,%d,%d,%li,%llu,%llu\n",
                         id,
                         iteration,
-                        os_info->program_list->program_list[program_off].name,
+                        os_info->program_list->program_list[program_indices[program_off]].name,
                         syscall_nr++,
                         syscall->syscall_number,
                         syscall->ret_val,
@@ -812,7 +812,7 @@ gather_syscall_info(vb_instance_t     * instance,
                      bytes_written = fprintf(os_info->program_fp, "%d,%llu,%s,%llu\n",
                         id,
                         iteration,
-                        os_info->program_list->program_list[program_off].name,
+                        os_info->program_list->program_list[program_indices[program_off]].name,
                         program_time
                     );
                     fflush(os_info->program_fp);
