@@ -128,7 +128,7 @@ typedef struct varbench_instance {
     vb_perfctrs_t  perf_ctrs;
 
     /* unique string to identify this experiment */
-    char * fmt_str;
+    char fmt_str[VB_FMT_LEN];
 
     struct {
         FILE * file;
@@ -250,8 +250,7 @@ vb_gather_kernel_results(vb_instance_t    * instance,
 
 static inline void
 vb_build_fmt_str(vb_instance_t * instance, 
-                 char          * prefix,
-                 char         ** str)
+                 char          * prefix)
 {
     struct timeval tv;
 
@@ -267,9 +266,9 @@ vb_build_fmt_str(vb_instance_t * instance,
     snprintf(tmbuf_micro, sizeof(tmbuf_micro), "%s-%lu", tmbuf, tv.tv_usec);
 
     if (prefix != NULL) {
-        asprintf(str, "%s-%s", prefix, tmbuf_micro);
+        snprintf(instance->fmt_str, VB_FMT_LEN, "%s-%s", prefix, tmbuf_micro);
     } else {
-        asprintf(str, "%s", tmbuf_micro);
+        snprintf(instance->fmt_str, VB_FMT_LEN, "%s", tmbuf_micro);
     }
 }
 

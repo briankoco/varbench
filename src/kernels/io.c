@@ -231,15 +231,12 @@ create_storage_filename(vb_instance_t * instance,
                         char          * file_name,
                         size_t          file_name_len)
 {
-    char * fmt_str;
     char * prefix;
 
     asprintf(&prefix, "%s-%d", VB_IO, instance->rank_info.local_id);
-    vb_build_fmt_str(instance, prefix, &fmt_str); 
-    snprintf(file_name, file_name_len, "%s/%s-%s.vbio", directory, prefix, fmt_str);
+    snprintf(file_name, file_name_len, "%s/%s-%s.vbio", directory, prefix, instance->fmt_str);
 
     free(prefix);
-    free(fmt_str);
 }
 
 static void 

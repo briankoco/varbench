@@ -632,13 +632,10 @@ vb_build_rank_info(int           * argc,
      */
     {
         if (info->local_id == 0) {
-            char * fmt_str;
 
             /* Generate unique file names for the node and rank maps */
-            vb_build_fmt_str(instance, NULL, &fmt_str);
-            VB_NODE_MAP_FILE(fmt_str, info->node_map_fname, MAX_FNAME_LEN);
-            VB_RANK_MAP_FILE(fmt_str, info->rank_map_fname, MAX_FNAME_LEN);
-            free(fmt_str);
+            VB_NODE_MAP_FILE(instance->fmt_str, info->node_map_fname, MAX_FNAME_LEN);
+            VB_RANK_MAP_FILE(instance->fmt_str, info->rank_map_fname, MAX_FNAME_LEN);
 
             /* Export them */
             status = vb_export_local_root_maps(info);

@@ -172,10 +172,7 @@ static void
 create_coherence_file(vb_instance_t * instance,
                       char          * file_name)
 {
-    char * fmt_str;
-    vb_build_fmt_str(instance, NULL, &fmt_str);
-    snprintf(file_name, MAX_FNAME_LEN, "%s-%s.shm", VB_COHERENCE_FILE, fmt_str);
-    free(fmt_str);
+    snprintf(file_name, MAX_FNAME_LEN, "%s-%s.shm", VB_COHERENCE_FILE, instance->fmt_str);
 }
 
 

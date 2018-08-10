@@ -271,8 +271,16 @@ vb_init_root_instance(vb_instance_t * instance,
     int status;
     
     /* Build various files */
-    vb_build_fmt_str(instance, instance->kernel.name, &(instance->fmt_str));
+    vb_build_fmt_str(instance, instance->kernel.name);
 
+    /* Broadcast fmt_str to everyone */
+    MPI_Bcast(instance->fmt_str,
+        VB_FMT_LEN,
+        MPI_CHAR,
+        0,
+        MPI_COMM_WORLD
+    );
+        
     snprintf(instance->data_csv.name, VB_FMT_LEN, "%s", instance->fmt_str);
     snprintf(instance->meta_xml.name, VB_FMT_LEN, "%s", instance->fmt_str);
 
@@ -308,6 +316,23 @@ vb_init_root_instance(vb_instance_t * instance,
 
     return VB_SUCCESS;
 }
+
+static int
+vb_init_nonroot_instance(vb_instance_t * instance,
+                         int             argc,
+                         char         ** argv)
+{
+    /* Receive fmt_str from root*/
+    MPI_Bcast(instance->fmt_str,
+        VB_FMT_LEN,
+        MPI_CHAR,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    return 0;
+}
+
 
 
 static pthread_t     * turbo_threads;
@@ -435,7 +460,6 @@ vb_deinit_local_root_instance(vb_instance_t * instance)
 void
 vb_deinit_root_instance(vb_instance_t * instance)
 {
-    free(instance->fmt_str);
     vb_complete_meta_xml(instance);
 }
 
@@ -507,6 +531,12 @@ vb_init_instance(vb_instance_t * instance,
         status = vb_init_root_instance(instance, argc, argv);
         if (status != 0) {
             vb_error_root("Root-specific initialization failed\n");
+            goto out_2;
+        }
+    } else {
+        status = vb_init_nonroot_instance(instance, argc, argv);
+        if (status != 0) {
+            vb_error_root("Nonroot-specific initialization failed\n");;
             goto out_2;
         }
     }
