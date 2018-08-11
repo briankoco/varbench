@@ -557,6 +557,7 @@ iteration(vb_instance_t      * instance,
             if (local_status != 0) {
                 os_info->program_list->last_failed_program = program_indices[i];
                 total_errors += 1;
+                break;
             }
         }
 
