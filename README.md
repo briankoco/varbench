@@ -36,8 +36,7 @@ call fuzzer [Syzkaller](https://github.com/google/syzkaller) to build
 workloads that only issue system calls. __Be warned__: running this workload
 may crash your operating system kernel, particularly if it is old
 
-### Running
-
+## Running
 
 ```
 mpirun -np <n procs> [any other MPI options] ./varbench -k <kernel> [any other varbench options]
@@ -45,40 +44,6 @@ mpirun -np <n procs> [any other MPI options] ./varbench -k <kernel> [any other v
 
 Running ./varbench with no arguments will give you a list of options and 
 describe how to use the framework.
-
-### Varbench methodology
-
-Varbench is a performance analysis framework to characterize
-performance variability on a system. 
-
-Varbench programs consist of three logical components: (1) instances,
-(2) iterations, and (3) kernels.
-
-Instances can be thought of as "ranks" in MPI terminology. Each
-instance essentially executes the same code as every other instance,
-but on its own private problem state.
-
-Iterations are self-explanatory. By default a varbench program will
-execute for 100 iterations. After each instance executes an iteration,
-there is a global MPI Barrier at which point timing information is
-collected and stored at the root process.
-
-Kernels constitute the singular workload executing in each instance.
-Varbench currently provides a set of workloads that stress shared
-resource performance.
-
-
-### Data analysis
-
-Each execution of a varbench kernel generates two files describing the results
-of the experiment. The first is an XML file that gives metadata about the run,
-including the options you selected, the arguments for the kernel you ran, and
-other information such as the processor/node topologies. The other file is a 
-CSV that gives detailed timing breakdowns for each instance and each iteration.
-
-A set of programs is available under the vb-stats/vis directory for visualizing
-experiments.
-
 
 ### Topology detection
 
@@ -129,6 +94,40 @@ The JSON _must_ have the following format:
 The values for ```os_core```, ```socket```, ```core```, and ```hw_thread``` will
 of course vary based on the characteristics of your architecture and operating
 system.
+
+
+## Varbench methodology
+
+Varbench is a performance analysis framework to characterize
+performance variability on a system. 
+
+Varbench programs consist of three logical components: (1) instances,
+(2) iterations, and (3) kernels.
+
+Instances can be thought of as "ranks" in MPI terminology. Each
+instance essentially executes the same code as every other instance,
+but on its own private problem state.
+
+Iterations are self-explanatory. By default a varbench program will
+execute for 100 iterations. After each instance executes an iteration,
+there is a global MPI Barrier at which point timing information is
+collected and stored at the root process.
+
+Kernels constitute the singular workload executing in each instance.
+Varbench currently provides a set of workloads that stress shared
+resource performance.
+
+
+## Data analysis
+
+Each execution of a varbench kernel generates two files describing the results
+of the experiment. The first is an XML file that gives metadata about the run,
+including the options you selected, the arguments for the kernel you ran, and
+other information such as the processor/node topologies. The other file is a 
+CSV that gives detailed timing breakdowns for each instance and each iteration.
+
+A set of programs is available under the vb-stats/vis directory for visualizing
+experiments.
 
 ## Authors
 
