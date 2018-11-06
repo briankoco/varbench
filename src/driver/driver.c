@@ -39,7 +39,7 @@ usage(void)
                 "\t  'n' disables core pinning\n" \
         "  -c (--cpu-list=<list of cpus>))\n" \
                 "\t comma (or semicolon) delimited list of CPUs to run on\n" \
-                "\t supersedes -p option" \
+                "\t supersedes -p option\n" \
         "  -m (--memory-pin=<l,i,n>) (default='l')\n" \
                 "\t allocate memory from 'l'ocal socket, 'i'nterleaved across sockets, or 'n'one\n"
         "  -t (--topology-file=)<file>\n" \
@@ -256,7 +256,7 @@ main(int     argc,
         vb_error_root("Could not determine process topology\n");
         goto out_err;
     }
- 
+
     /* Various initialization */
     status = vb_init_instance(&this_instance, false, argc, argv);
     if (status != VB_SUCCESS) {
