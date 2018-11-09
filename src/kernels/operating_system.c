@@ -36,7 +36,7 @@
 #define PROGRAM_WAIT_TIME   2
 #define FLUSH_GRANULARITY   (1ULL << 20)
 
-#define USE_MPI_GATHER
+// #define USE_MPI_GATHER
 
 //#define VB_NO_CHECK
 
