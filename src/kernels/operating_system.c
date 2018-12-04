@@ -248,7 +248,11 @@ init_syscall_info_file(vb_instance_t * instance,
         return VB_GENERIC_ERROR;
     }
 
+#ifdef CORPUS_USE_TSC
+    fprintf(os_info->syscall_fp, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,tsc_cycles\n");
+#else
     fprintf(os_info->syscall_fp, "rank,iteration,program_id,syscall_offset_in_program,syscall_number,ret_val,time_in,nsecs\n");
+#endif
     fflush(os_info->syscall_fp);
 
     os_info->syscall_last_flush = 0;
@@ -289,7 +293,11 @@ init_program_info_file(vb_instance_t * instance,
         return VB_GENERIC_ERROR;
     }
 
+#ifdef CORPUS_USE_TSC
+    fprintf(os_info->program_fp, "rank,iteration,program_id,tsc_cycles\n");
+#else
     fprintf(os_info->program_fp, "rank,iteration,program_id,nsecs\n");
+#endif
     fflush(os_info->program_fp);
 
     os_info->program_last_flush = 0;

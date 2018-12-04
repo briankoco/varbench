@@ -1,11 +1,23 @@
 #ifndef __LIBSYZCORPUS_H__
 #define __LIBSYZCORPUS_H__
 
-
 #define MAX_SYSCALLS 4207
 
-#define TO_NSECS(sec,nsec)\
-		((sec) * 1000000000 + (nsec))
+#ifdef CORPUS_USE_TSC
+#define rdtscll(val)                                \
+    do {                                            \
+        uint32_t a, d;                              \
+        asm volatile("rdtsc" : "=a" (a), "=d" (d));  \
+        val = ((uint64_t)a) | (((uint64_t)d) << 32);\
+    } while (0)
+
+#define GET_TIME(tv) rdtscll(tv.tv_nsec)
+#define TO_NSECS(tv) (tv.tv_nsec)
+#else
+#define GET_TIME(tv) clock_gettime(CLOCK_MONOTONIC, &tv);
+#define TO_NSECS(tv) ((tv.tv_sec) * 1000000000 + (tv.tv_nsec))
+#endif
+
 
 #include <time.h> 
 #include <stdint.h>

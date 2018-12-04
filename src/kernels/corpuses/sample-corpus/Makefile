@@ -9,8 +9,8 @@ $(TARGET): $(OBJ)
 	@$(CC) -shared -o $(TARGET) $(OBJ)
 
 $(OBJ): $(SRC)
-	@echo "	$(CC) -fpic -c $(SRC)"
-	@$(CC) -fpic -c $(SRC)
+	@echo "	$(CC) $(CFLAGS) -fpic -c $(SRC)"
+	@$(CC) $(CFLAGS) -fpic -c $(SRC)
 
 veryclean:
 	@echo "	$(RM) $(TARGET) $(OBJ)"

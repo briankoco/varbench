@@ -31,6 +31,10 @@ all: driver libvarbench
 # Toggle these if you want to run with papi perf ctr collection
 #EXTERN_LIBS += -lpapi
 #CFLAGS += -DUSE_PAPI
+
+# Toggle this if you want to run the operating_system kernel
+# in TSC mode
+CFLAGS += -DCORPUS_USE_TSC
 #### END USER OPTIONS
 
 
